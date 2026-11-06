@@ -4,7 +4,7 @@ Use your local Magpie AI gateway from a VS Code Remote-SSH workspace. Keep provi
 
 让 VS Code Remote-SSH 中的编程 agent 直接使用你本机的 Magpie 网关。模型供应商、订阅登录和上游密钥继续由本机 Magpie 管理，远端无需再安装或配置一份 Magpie。
 
-从 [GitHub Releases](https://github.com/wkoa/magpie-remote-bridge/releases/latest) 下载 VSIX 安装包。本项目为独立社区插件，与 Magpie、Microsoft、Anthropic 或 OpenAI 无官方隶属关系。
+在本机 VS Code 扩展面板搜索 `@id:wkoa.magpie-remote-bridge`，或打开 [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=wkoa.magpie-remote-bridge) 安装。也可从 [GitHub Releases](https://github.com/wkoa/magpie-remote-bridge/releases/latest) 下载 VSIX 安装包。本项目为独立社区插件，与 Magpie、Microsoft、Anthropic 或 OpenAI 无官方隶属关系。
 
 默认连接本机 `http://127.0.0.1:3425`，在远端提供 `http://127.0.0.1:13425`。
 
@@ -22,7 +22,7 @@ Use your local Magpie AI gateway from a VS Code Remote-SSH workspace. Keep provi
 ## 安装和使用
 
 1. 本机启动 Magpie，确保网关运行在 `127.0.0.1:3425`。
-2. 在本机 VS Code 的扩展面板菜单选择 **Install from VSIX… / 从 VSIX 安装…**，选择下载的 `magpie-remote-bridge-<版本>.vsix`。扩展应安装在本机；它通过 `extensionKind: ["ui"]` 明确运行在本机。
+2. 在本机 VS Code 搜索 `@id:wkoa.magpie-remote-bridge` 并安装；也可选择 **Install from VSIX… / 从 VSIX 安装…**，安装下载的 `magpie-remote-bridge-<版本>.vsix`。扩展应安装在本机；它通过 `extensionKind: ["ui"]` 明确运行在本机。
 3. 使用 VS Code **Remote-SSH** 打开远端项目文件夹。
 4. 命令面板执行 **Magpie: 连接本机网关到远端**。首次选择与当前工作区对应的 SSH Host。每个远端 authority 的选择会在本机记住。
 5. 执行 **Magpie: 在远端启动 Claude Code** 或 **Magpie: 在远端启动 Codex CLI**。终端工作目录就是远端项目，文件操作和命令执行发生在远端。
