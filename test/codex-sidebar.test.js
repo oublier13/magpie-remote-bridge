@@ -56,7 +56,7 @@ test('credential broker withholds credentials during reconnect and closes stalle
 
 test('credential broker rejects unsupported hosts and malformed capabilities', async () => {
   await assert.rejects(startCredentialBroker('token', { platform: 'win32' }), /macOS or Linux/);
-  for (const token of ['', 'has space', 'line\nbreak', undefined]) await assert.rejects(startCredentialBroker(token), /Invalid/);
+  for (const token of ['', 'has space', 'line\nbreak', undefined]) await assert.rejects(startCredentialBroker(token, { platform: 'linux' }), /Invalid/);
 });
 
 function fixture(overrides = {}) {
