@@ -4,9 +4,10 @@ const path = require('node:path');
 const os = require('node:os');
 const MODEL_KEYS = ['ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL', 'ANTHROPIC_DEFAULT_SONNET_MODEL',
   'ANTHROPIC_DEFAULT_HAIKU_MODEL', 'ANTHROPIC_SMALL_FAST_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL'];
-async function localClaudeModels(gatewayPort) {
+/** Import only model identifiers, and only from settings using this local gateway. */
+async function localClaudeModels(gatewayPort, { readFile = fs.readFile } = {}) {
   try {
-    const json = JSON.parse(await fs.readFile(path.join(os.homedir(), '.claude', 'settings.json'), 'utf8'));
+    const json = JSON.parse(await readFile(path.join(os.homedir(), '.claude', 'settings.json'), 'utf8'));
     const env = json.env || {};
     const base = new URL(env.ANTHROPIC_BASE_URL);
     if (!['127.0.0.1', 'localhost', '[::1]'].includes(base.hostname) ||
