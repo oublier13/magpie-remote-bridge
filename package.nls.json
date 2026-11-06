@@ -6,6 +6,8 @@
   "command.terminal": "Magpie: Open Remote Terminal",
   "command.claude": "Magpie: Start Claude Code Remotely",
   "command.codex": "Magpie: Start Codex CLI Remotely",
+  "command.codexSidebar": "Magpie: Connect Codex Sidebar (Remote Account)",
+  "command.restoreCodex": "Magpie: Restore Codex Configuration (Remote Account)",
   "command.model": "Magpie: Choose Agent Model",
   "command.diagnose": "Magpie: Check Gateway and Tunnel",
   "command.copyConnection": "Magpie: Copy Remote Connection Details",
@@ -29,5 +31,5 @@
   "setup.connect.title": "Open a Remote-SSH folder and connect",
   "setup.connect.description": "Open your remote project with Remote-SSH. Choose the same SSH server and user. The bridge verifies remote HTTP access before marking the connection ready.\n[Connect](command:magpieBridge.connect)",
   "setup.agent.title": "Start your remote coding agent",
-  "setup.agent.description": "Install the agent CLI on your remote machine first. Use these commands to open a terminal with the bridge configuration.\n[Start Claude Code](command:magpieBridge.claude)\n[Start Codex CLI](command:magpieBridge.codex)"
+  "setup.agent.description": "The bridge checks the remote CLI before launch, including user bin directories and interactive shell PATH. If missing, open a configured remote terminal or the official installation guide. Codex offers a native Linux ARM64 binary without npm.\n[Start Claude Code](command:magpieBridge.claude)\n[Start Codex CLI](command:magpieBridge.codex)\n[Codex installation](https://github.com/openai/codex)\n[Claude Code installation](https://code.claude.com/docs/en/setup)"
 }

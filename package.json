@@ -2,7 +2,7 @@
   "name": "magpie-remote-bridge",
   "displayName": "Magpie Remote Bridge",
   "description": "%extension.description%",
-  "version": "0.2.0",
+  "version": "0.3.1",
   "publisher": "wkoa",
   "license": "MIT",
   "author": "wkoa",
@@ -53,7 +53,8 @@
     "test": "node --test test/*.test.js",
     "check": "node scripts/check.js",
     "package": "node scripts/package.js",
-    "test:coverage": "node --test --experimental-test-coverage test/*.test.js"
+    "test:coverage": "node --test --experimental-test-coverage test/*.test.js",
+    "test:codex-sidebar": "node scripts/verify-codex-sidebar.js"
   },
   "contributes": {
     "commands": [
@@ -85,6 +86,16 @@
       {
         "command": "magpieBridge.codex",
         "title": "%command.codex%",
+        "enablement": "remoteName == ssh-remote && isWorkspaceTrusted && workspaceFolderCount != 0"
+      },
+      {
+        "command": "magpieBridge.codexSidebar",
+        "title": "%command.codexSidebar%",
+        "enablement": "remoteName == ssh-remote && isWorkspaceTrusted && workspaceFolderCount != 0"
+      },
+      {
+        "command": "magpieBridge.restoreCodex",
+        "title": "%command.restoreCodex%",
         "enablement": "remoteName == ssh-remote && isWorkspaceTrusted && workspaceFolderCount != 0"
       },
       {
@@ -203,6 +214,14 @@
         },
         {
           "command": "magpieBridge.codex",
+          "when": "remoteName == ssh-remote"
+        },
+        {
+          "command": "magpieBridge.codexSidebar",
+          "when": "remoteName == ssh-remote"
+        },
+        {
+          "command": "magpieBridge.restoreCodex",
           "when": "remoteName == ssh-remote"
         },
         {

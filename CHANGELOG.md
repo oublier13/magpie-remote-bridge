@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.1
+
+- Accept the official Codex extension's null CLI executable default when connecting the sidebar, while continuing to reject nonempty custom executable overrides.
+- Preserve explicit null settings in the VS Code test fixture and cover null, missing, empty and whitespace defaults.
+
+## 0.3.0 (development)
+
+- Add commands to connect the official remote Codex sidebar and restore its previous provider selection through Codex's configuration RPC.
+- Obtain provider credentials through a private SSH-forwarded Unix socket and command auth, without token files, anonymous TCP endpoints, or changes to the official extension executable.
+- Guard the remote account with an exclusive lease and durable recovery metadata; preserve user edits during restoration and recover credential forwarding after SSH reconnect.
+- Check bundled Codex auth compatibility strictly, bound configuration subprocesses, and reap them on cancellation and hangup.
+- Add isolated adapter and UI tests plus an optional real app-server test against a local Responses fixture. Remote sidebar UI and live model acceptance remain pending.
+
+## 0.2.1
+
+- Check the remote Claude Code or Codex CLI before launch, including interactive shell initialization and user bin directories.
+- Launch the resolved executable by absolute path and add only its directory to that process PATH, supporting native binaries and nvm installations.
+- Offer a configured remote terminal, official installation instructions and retry when a CLI is missing; preserve the working gateway and distinguish check failures from missing programs.
+- Cancel stale checks and reject results from replaced sessions or tunnels.
+
 ## 0.2.0
 
 - Extract a cancellable session state machine. Commands join an in-progress reconnect instead of revoking the running agents' token and terminals.

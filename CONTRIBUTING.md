@@ -2,7 +2,7 @@
 
 ## 本地验证
 
-使用 Node.js 22+ 和 npm。项目保持 CommonJS JavaScript，没有运行时 npm 依赖，也不需要编译或打包前置步骤。
+使用 Node.js 22+ 和 npm；macOS/Linux 开发检查与远端适配器测试还需要 Python 3。项目保持 CommonJS JavaScript，没有运行时 npm 依赖，也不需要编译或打包前置步骤。侧边栏远端适配器仅依赖 Python 标准库。
 
 ```sh
 npm ci
@@ -13,6 +13,17 @@ npm run package
 ```
 
 安装包输出到 `dist/`。请不要提交本机配置、账号、密码、令牌、原始联调日志或 VSIX 文件。发布和安装扩展需要另外执行，不由检查脚本自动完成。
+
+### 可选的官方 Codex 协议验证
+
+默认测试使用本机模拟服务，不调用模型。额外提供真实官方二进制兼容检查，所有配置都位于临时 `CODEX_HOME`，不会读取或修改原有 Codex 认证文件：
+
+```sh
+MAGPIE_TEST_CODEX_BINARY=/absolute/path/to/codex node --test test/codex-remote.test.js
+npm run test:codex-sidebar -- /absolute/path/to/codex
+```
+
+第一项覆盖真实配置 RPC 和恢复；第二项启动官方 app-server，经生产凭据 broker 向本机模拟 Responses 服务发送请求并读取固定 SSE 回复，检查新线程 provider 与令牌未落盘。不会调用真实模型、SSH 或外部 API。这些检查不能代替真实远端侧边栏 UI 验收。
 
 ## 模块边界
 
@@ -27,9 +38,12 @@ npm run package
 | `src/cancellation.js` | 可及时结束的取消等待，保留迟到资源的清理路径 |
 | `src/ui.js` | AbortSignal 与 VS Code 取消令牌互通 |
 | `src/proxy.js` | 固定路由白名单、认证替换、HTTP/SSE 代理和模型目录查询 |
-| `src/tunnel.js` | OpenSSH 参数、子进程、远端检测和取消清理 |
+| `src/tunnel.js` | OpenSSH 参数、子进程、远端 HTTP/CLI 检查和取消清理 |
 | `src/auth.js` / `src/askpass-client.js` | 本机安全输入框与 SSH ASKPASS 认证通道 |
 | `src/agents.js` | 白名单模型导入与临时终端启动配置 |
+| `src/codex-sidebar.js` | Codex 侧边栏凭据通道与会话/重连生命周期 |
+| `src/credential-broker.js` | 仅通过私有 Unix socket 提供命令式凭据，无 TCP 监听 |
+| `src/codex-remote.py` | Python 标准库远端适配器、官方配置 RPC、账户租约与逐字段恢复 |
 
 状态机的连接阶段为选择目标、检查网关、建立 SSH、验证远端 HTTP 和已连接。意外断线进入重连，重连保留代理和令牌；手动取消、失败或释放扩展会撤销会话。异步步骤完成后必须再次确认会话仍有效，防止取消后恢复连接。
 

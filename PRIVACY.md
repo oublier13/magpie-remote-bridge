@@ -23,6 +23,16 @@ The extension connects an SSH workspace to the Magpie gateway running on your lo
 
 断开桥接会关闭会话代理、插件创建的终端、SSH 隧道并清理生成的临时认证辅助文件。已保存的偏好、Host 映射与可选网关密钥可通过 VS Code 的扩展状态/设置和密钥命令管理。
 
+## Codex 侧边栏
+
+执行“连接 Codex 侧边栏（当前远端账户）”会通过官方 Codex 配置 RPC 更新远端 `CODEX_HOME/config.toml` 的 `model`、`model_provider` 和插件专用的 `model_providers.magpie_vscode_bridge`。默认 `CODEX_HOME` 为 `~/.codex`；这会影响同一远端账户的新 Codex 会话。插件不修改官方扩展文件或 `chatgpt.cliExecutable`，不读取 `auth.json`，不会保存原供应商的认证配置。
+
+provider 配置只包含本次桥接地址、模型和凭据命令。该命令通过 SSH 转发的私有 Unix socket 取得临时令牌，令牌通过进程管道返回给 Codex，不写入配置、脚本、命令参数或恢复记录。两端 socket 位于权限为 0700 的私有目录，本机 socket 为 0600。该模式不开放无认证 TCP 服务；同账户进程与远端管理员仍属于可信边界。
+
+远端 `CODEX_HOME/.magpie-remote-bridge.json` 以 0600 保存租约、socket 归属、原模型/provider 选择及插件生成的非敏感配置，用于中断后恢复。同一账户只允许一个窗口持有侧边栏桥接。执行“恢复 Codex 原配置”会通过版本检查，只还原仍与插件写入值相同的字段，保留用户后续修改，并清理恢复记录和 socket 目录。
+
+断开或重载窗口立即关闭本机凭据服务并撤销 API 会话，但此时远端可能不可达，因此不自动改回远端配置。重新连接后可显式执行恢复命令；窗口重载不会静默接管其他窗口或自动恢复侧边栏租约。自动重连保留令牌，在转发恢复前暂停发放凭据，无法恢复侧边栏通道时会单独提示。
+
 ## 联系和问题
 
 项目问题请使用 [GitHub Issues](https://github.com/wkoa/magpie-remote-bridge/issues)。请先删除日志中的主机、账号、路径、提示词和凭据，再提交问题。

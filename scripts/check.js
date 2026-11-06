@@ -41,6 +41,12 @@ function check() {
     const result = spawnSync(process.execPath, ['--check', path.join(root, 'src', file)], { encoding: 'utf8' });
     if (result.status !== 0) throw new Error(result.stderr || `Syntax error in ${file}`);
   }
+  if (process.platform !== 'win32') {
+    const result = spawnSync('python3', ['-I', '-c', 'import sys; compile(sys.stdin.read(), "codex-remote.py", "exec")'], {
+      input: fs.readFileSync(path.join(root, 'src', 'codex-remote.py'), 'utf8'), encoding: 'utf8'
+    });
+    if (result.status !== 0) throw new Error(result.error?.message || result.stderr || 'Python 3 syntax check failed');
+  }
   checkLocalization();
   const manifest = json('package.json');
   const lock = json('package-lock.json');

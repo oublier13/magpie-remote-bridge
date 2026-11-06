@@ -6,6 +6,8 @@
   "command.terminal": "Magpie: 打开预配置的远端终端",
   "command.claude": "Magpie: 在远端启动 Claude Code",
   "command.codex": "Magpie: 在远端启动 Codex CLI",
+  "command.codexSidebar": "Magpie: 连接 Codex 侧边栏（当前远端账户）",
+  "command.restoreCodex": "Magpie: 恢复 Codex 原配置（当前远端账户）",
   "command.model": "Magpie: 选择远端 agent 的模型",
   "command.diagnose": "Magpie: 检查网关与隧道",
   "command.copyConnection": "Magpie: 复制远端扩展接入信息",
@@ -29,5 +31,5 @@
   "setup.connect.title": "打开 Remote-SSH 文件夹并连接",
   "setup.connect.description": "使用 Remote-SSH 打开远端项目，选择相同的 SSH 服务器与用户。桥接会验证远端 HTTP 链路后再显示已连接。\n[连接桥接](command:magpieBridge.connect)",
   "setup.agent.title": "启动远端编程助手",
-  "setup.agent.description": "先在远端安装对应的 CLI，再通过以下命令打开已配置桥接的终端。\n[启动 Claude Code](command:magpieBridge.claude)\n[启动 Codex CLI](command:magpieBridge.codex)"
+  "setup.agent.description": "启动前检查远端 CLI，包括用户 bin 目录与交互 shell PATH。未安装时可打开预配置的远端终端或官方安装说明。Codex 提供无需 npm 的 Linux ARM64 原生二进制。\n[启动 Claude Code](command:magpieBridge.claude)\n[启动 Codex CLI](command:magpieBridge.codex)\n[Codex 安装说明](https://github.com/openai/codex)\n[Claude Code 安装说明](https://code.claude.com/docs/en/setup)"
 }
