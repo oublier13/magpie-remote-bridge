@@ -3,6 +3,8 @@ const { spawn } = require('node:child_process');
 const { randomBytes } = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const { isIP } = require('node:net');
+const { stripVTControlCharacters } = require('node:util');
+const { remoteCliScript } = require('./agents');
 
 function validateHost(host) {
   const invalid = () => { throw new Error('SSH Host 必须是有效的别名或 user@host，不能包含空白或命令参数'); };
@@ -63,26 +65,44 @@ class Tunnel extends EventEmitter {
     return this.run(args, { signal, master: this.child, timeoutMs: 20000, timeoutMessage: '远端连通性检测超时',
       input: `url = "http://127.0.0.1:${this.options.remotePort}/v1/models"\nheader = "Authorization: Bearer ${escapedToken}"\n` });
   }
+  checkCli(agent, { signal } = {}) {
+    if (signal?.aborted) return Promise.reject(abortError());
+    const marker = `MAGPIE_CLI_${randomBytes(12).toString('hex').toUpperCase()}`;
+    const input = remoteCliScript(agent, marker);
+    const args = sshArgs({ ...this.options, interactive: false }, 'unused');
+    args.splice(args.indexOf('-R'));
+    args.push(this.options.host, 'sh -s');
+    return this.run(args, { signal, master: this.child, input, timeoutMs: 15000,
+      timeoutMessage: 'Remote CLI check timed out', maxOutputBytes: 16384,
+      parseOutput: body => {
+        const lines = stripVTControlCharacters(body).split('\n').filter(line => line.startsWith(`${marker}\t`));
+        if (lines.length !== 1) throw new Error('Invalid remote CLI check response');
+        const executable = lines[0].slice(marker.length + 1);
+        if (executable === 'MISSING') return undefined;
+        if (!executable.startsWith('/') || /[\x00-\x1f\x7f]/.test(executable)) throw new Error('Invalid remote CLI path');
+        return executable;
+      } });
+  }
   stop() {
     // Reject before signalling children; neither a late marker nor HTTP 200 can win.
     for (const operation of [...this.pending]) operation.cancel(abortError());
     this.child = undefined;
     for (const process of this.processes.values()) process.terminate();
   }
-  run(args, { signal, main = false, marker, master, input, timeoutMs, timeoutMessage }) {
+  run(args, { signal, main = false, marker, master, input, timeoutMs, timeoutMessage, maxOutputBytes = 128, parseOutput }) {
     return new Promise((resolve, reject) => {
       let child; let record; let timer; let settled = false; let closed = false; let terminating = false; let killTimer;
       let body = ''; let errorText = ''; let outputBytes = 0;
       const operation = { main, cancel: error => finish(error) };
       const onAbort = () => finish(abortError());
-      const finish = error => {
+      const finish = (error, value) => {
         if (settled) return;
         settled = true; clearTimeout(timer); signal?.removeEventListener('abort', onAbort);
         this.pending.delete(operation);
         if (error) {
           if (main && this.child === child) this.child = undefined;
           record?.terminate(); reject(error);
-        } else resolve();
+        } else resolve(value);
       };
       const onError = error => {
         if (!settled) finish(error);
@@ -91,8 +111,8 @@ class Tunnel extends EventEmitter {
       const onStdout = chunk => {
         if (main && settled) return;
         const text = chunk.toString(); outputBytes += Buffer.byteLength(text);
-        if (!main && outputBytes > 128) return finish(new Error('远端网关检测响应过长'));
-        body = (body + text).slice(main ? -4096 : -128);
+        if (!main && outputBytes > maxOutputBytes) return finish(new Error(parseOutput ? 'Remote CLI check output exceeded limit' : '远端网关检测响应过长'));
+        body = (body + text).slice(main ? -4096 : -maxOutputBytes);
         if (main && body.includes(marker)) {
           // Also observe a close emitted in the same turn as the readiness marker.
           queueMicrotask(() => {
@@ -117,13 +137,16 @@ class Tunnel extends EventEmitter {
             for (const pending of [...this.pending]) if (!pending.main) pending.cancel(new Error(message));
             this.emit('closed', message);
           }
-        } else if (code !== 0 || body.trim() !== '200') {
-          finish(new Error(`远端网关检测失败 (SSH/curl=${code}, HTTP=${body.trim() || '无响应'})；确认远端已安装 curl、SSH Host 与当前工作区一致`));
+        } else if (code !== 0 || (!parseOutput && body.trim() !== '200')) {
+          finish(new Error(parseOutput ? `Remote CLI check failed (SSH/shell=${code}): ${errorText.trim()}` : `远端网关检测失败 (SSH/curl=${code}, HTTP=${body.trim() || '无响应'})；确认远端已安装 curl、SSH Host 与当前工作区一致`));
         } else {
           queueMicrotask(() => {
             if (master && (this.child !== master || master.killed || master.exitCode != null || master.signalCode != null)) {
               finish(new Error('SSH 隧道在远端检测期间已关闭'));
-            } else finish();
+            } else {
+              try { finish(undefined, parseOutput ? parseOutput(body) : undefined); }
+              catch (error) { finish(error); }
+            }
           });
         }
       };

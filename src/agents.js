@@ -25,7 +25,42 @@ function terminalEnv({ remotePort, token, model }, localModels = {}) {
   return env;
 }
 function shellQuote(value) { return "'" + String(value).replace(/'/g, "'\\''") + "'"; }
-function codexCommand({ remotePort, model }) {
+// Limit remote inspection to known CLI names; no user input becomes shell code.
+function remoteCliScript(agent, marker) {
+  if (!['codex', 'claude'].includes(agent) || !/^[A-Z0-9_]+$/.test(marker)) throw new Error('Invalid CLI check');
+  const probe = `p=$(command -v ${agent} 2>/dev/null)
+case "$p" in /*) if [ -f "$p" ] && [ -x "$p" ]; then printf '\n%s\\t%s\\n' '${marker}' "$p"; exit 0; fi;; esac
+for p in "$HOME/.local/bin/${agent}" "$HOME/bin/${agent}" "$HOME/.npm-global/bin/${agent}"; do
+  if [ -f "$p" ] && [ -x "$p" ]; then printf '\n%s\\t%s\\n' '${marker}' "$p"; exit 0; fi
+done
+exit 3`;
+  return `sh -c ${shellQuote(probe)} && exit 0
+failed=0
+case "\${SHELL##*/}" in
+  bash|zsh|ksh|sh|dash)
+    "$SHELL" -ilc ${shellQuote(probe)} && exit 0
+    [ "$?" -eq 3 ] || failed=1
+    "$SHELL" -ic ${shellQuote(probe)} && exit 0
+    [ "$?" -eq 3 ] || failed=1
+    ;;
+esac
+if command -v bash >/dev/null 2>&1; then
+  bash -ic ${shellQuote(probe)} && exit 0
+  [ "$?" -eq 3 ] || failed=1
+fi
+[ "$failed" -eq 0 ] || exit 2
+printf '\n%s\\tMISSING\\n' '${marker}'
+`;
+}
+
+function cliCommand(executable) {
+  if (typeof executable !== 'string' || !executable.startsWith('/') || /[\x00-\x1f\x7f]/.test(executable)) {
+    throw new Error('Invalid remote CLI path');
+  }
+  // Also support npm/nvm shebangs that find node alongside the resolved CLI.
+  return `PATH=${shellQuote(path.posix.dirname(executable))}:"$PATH" ${shellQuote(executable)}`;
+}
+function codexCommand({ remotePort, model }, executable) {
   const base = `http://127.0.0.1:${remotePort}/v1`;
   const config = {
     model_provider: 'magpie_bridge',
@@ -38,6 +73,6 @@ function codexCommand({ remotePort, model }) {
     'model_providers.magpie_bridge.supports_websockets': false
   };
   if (model) config.model = model;
-  return 'codex ' + Object.entries(config).map(([k, v]) => '-c ' + shellQuote(`${k}=${JSON.stringify(v)}`)).join(' ');
+  return (executable ? cliCommand(executable) : 'codex') + ' ' + Object.entries(config).map(([k, v]) => '-c ' + shellQuote(`${k}=${JSON.stringify(v)}`)).join(' ');
 }
-module.exports = { localClaudeModels, terminalEnv, codexCommand, shellQuote };
+module.exports = { localClaudeModels, terminalEnv, codexCommand, shellQuote, cliCommand, remoteCliScript };

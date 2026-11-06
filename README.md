@@ -39,7 +39,16 @@ Use your local Magpie AI gateway from a VS Code Remote-SSH workspace. Keep provi
 
 Claude Code 会读取本机 `~/.claude/settings.json` 中指向当前 Magpie 网关的模型环境项，仅同步白名单中的模型字段。也可以执行 **Magpie: 选择远端 agent 的模型** 显式指定，或在选择器中选择“使用本机 Magpie 的默认模型配置”清除覆盖设置。Codex 首次启动需选择一个模型，使用 `-c` 临时指定独立 provider，不修改远端 `~/.codex/config.toml`。
 
-这些启动命令要求远端已安装对应的 `claude` / `codex` 可执行文件。插件自动处理网关连接和启动参数，不负责安装 agent 本身。选择模型只影响之后启动的会话，不切换已运行会话，也不修改本机 Magpie 的模型选择。
+启动前，插件复用当前私有 SSH 认证连接检查远端 `claude` / `codex`，覆盖普通 PATH、`~/.local/bin`、`~/bin`、`~/.npm-global/bin`，以及交互登录/非登录 shell 初始化后的 PATH（例如 nvm）。找到后使用可执行文件的绝对路径，并仅为本次启动将其目录加入 PATH；无需先修改全局 PATH 或远端 shell 配置。检查可取消，15 秒超时，输出大小有上限。
+
+未找到 CLI 时，插件提示“需要在远端安装”，提供 **打开远端终端**、**官方安装说明** 和 **重试**，不会向终端发送注定失败的启动命令。检查失败时还可查看日志。取消或缺失 CLI 不会断开已工作的网关；预配置终端仍携带桥接地址和临时令牌，安装完成后重新执行插件启动命令即可。
+
+- [Codex 官方安装说明](https://github.com/openai/codex)：支持 Linux ARM64 原生二进制，无需 Node.js/npm。请按远端系统和架构选择官方发布包；本机安装 Codex 不等于远端已安装。
+- [Claude Code 官方安装说明](https://code.claude.com/docs/en/setup)：按官方说明在远端安装。
+
+插件不自动下载或安装 CLI，不执行远程下载脚本。选择模型只影响之后启动的会话，不切换已运行会话，也不修改本机 Magpie 的模型选择。
+
+**Remote CLI prerequisites (English):** The launcher checks the CLI through the session's private SSH connection before opening an agent terminal. It checks PATH, user bin directories, and interactive login/non-login shell initialization (including nvm), then launches the resolved absolute path with its directory added to PATH for that process. The check is cancellable, has a 15-second timeout, and bounds its output. If the CLI is missing or inspection fails, the bridge stays connected and offers a configured remote terminal, the official installation guide, and retry. Install the CLI on the remote machine and launch again. [Codex](https://github.com/openai/codex) provides a native Linux ARM64 binary without Node.js/npm; [Claude Code](https://code.claude.com/docs/en/setup) has its own official installation instructions. The extension does not download installers or change remote shell configuration.
 
 ## 其他终端和远端扩展
 
@@ -126,6 +135,7 @@ SSH 密码通过 OpenSSH ASKPASS 与本机随机令牌保护的回环 IPC 传递
 - **Permission denied / Host key verification failed**：先通过 Remote-SSH 确认目标用户与主机指纹；macOS/Linux 在插件的安全输入框完成认证。硬件触摸或特殊企业 MFA 流程仍可能需要额外配置。
 - **remote port forwarding failed**：检查远端 13425 是否占用，以及 sshd 的 `AllowTcpForwarding` / `PermitListen`。
 - **远端检测失败**：确认 Host 与当前 VS Code 工作区相同、远端存在 curl，且 shell 不会在非交互命令前后输出额外内容。
+- **远端 CLI 未安装或未找到**：从提示打开预配置终端和官方安装说明，在远端安装对应 CLI 后重试。Linux ARM64 的 Codex 可直接使用官方原生二进制，无需 npm。若检查失败，查看日志，排查 shell 初始化是否报错、等待输入或输出过多。
 - **扩展仍要求登录**：确认使用了插件的专用启动命令；第三方扩展需要自己支持自定义网关。
 - **无模型或模型不支持**：检查本机 Magpie 的模型目录与路由。目录检查不发起模型生成；实际模型可用性需运行一次 agent 会话验证。
 
