@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.DS_Store
+
+# Machine-specific integration reports and runtime data stay local.
+LIVE_TEST.md
+LIVE_TEST_RESULT.json
+*.log
+.env
+.env.*
+*.pem
+*.key
+*.vsix

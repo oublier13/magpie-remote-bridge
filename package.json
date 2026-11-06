@@ -1,0 +1,50 @@
+{
+  "name": "magpie-remote-bridge",
+  "displayName": "Magpie Remote Bridge",
+  "description": "让 Remote-SSH 中的编程 agent 复用本机 Magpie 网关、模型与登录。",
+  "version": "0.1.1",
+  "publisher": "local-tools",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/wkoa/magpie-remote-bridge.git" },
+  "homepage": "https://github.com/wkoa/magpie-remote-bridge#readme",
+  "bugs": { "url": "https://github.com/wkoa/magpie-remote-bridge/issues" },
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Other"],
+  "extensionKind": ["ui"],
+  "main": "./src/extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "capabilities": { "untrustedWorkspaces": { "supported": false }, "virtualWorkspaces": false },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/extension.js && node --check src/proxy.js && node --check src/tunnel.js && node --check src/agents.js && node --check src/auth.js && node --check src/askpass-client.js",
+    "package": "python3 scripts/package.py"
+  },
+  "contributes": {
+    "commands": [
+      { "command": "magpieBridge.connect", "title": "Magpie: 连接本机网关到远端" },
+      { "command": "magpieBridge.disconnect", "title": "Magpie: 断开远端桥接" },
+      { "command": "magpieBridge.changeHost", "title": "Magpie: 更改当前工作区的 SSH Host" },
+      { "command": "magpieBridge.terminal", "title": "Magpie: 打开预配置的远端终端" },
+      { "command": "magpieBridge.claude", "title": "Magpie: 在远端启动 Claude Code" },
+      { "command": "magpieBridge.codex", "title": "Magpie: 在远端启动 Codex CLI" },
+      { "command": "magpieBridge.model", "title": "Magpie: 选择远端 agent 的模型" },
+      { "command": "magpieBridge.diagnose", "title": "Magpie: 检查网关与隧道" },
+      { "command": "magpieBridge.copyConnection", "title": "Magpie: 复制远端扩展接入信息" },
+      { "command": "magpieBridge.key", "title": "Magpie: 设置本机网关密钥（可选）" },
+      { "command": "magpieBridge.logs", "title": "Magpie: 显示连接日志" }
+    ],
+    "configuration": {
+      "title": "Magpie Remote Bridge",
+      "properties": {
+        "magpieBridge.sshHost": { "type": "string", "default": "", "scope": "application", "description": "本机 SSH config 中的 Host 别名。首次连接可选择或输入。" },
+        "magpieBridge.gatewayPort": { "type": "integer", "default": 3425, "minimum": 1, "maximum": 65535, "scope": "application", "description": "本机 127.0.0.1 上的 Magpie 网关端口。" },
+        "magpieBridge.remotePort": { "type": "integer", "default": 13425, "minimum": 1024, "maximum": 65535, "scope": "application", "description": "远端 127.0.0.1 上的桥接端口，每个窗口使用不同端口可同时连接。" },
+        "magpieBridge.sshPath": { "type": "string", "default": "ssh", "scope": "application", "description": "本机 OpenSSH 可执行文件路径。" },
+        "magpieBridge.sshConfigFile": { "type": "string", "default": "", "scope": "application", "description": "可选 SSH config 文件绝对路径，留空使用 OpenSSH 默认配置。" },
+        "magpieBridge.model": { "type": "string", "default": "", "scope": "application", "description": "远端启动的模型 ID，例如 provider/model；留空时 Claude 沿用本机 Magpie 的模型环境配置。" },
+        "magpieBridge.autoConnect": { "type": "boolean", "default": false, "scope": "application", "description": "在可信 Remote-SSH 工作区中，使用已保存的 SSH Host 自动连接。" },
+        "magpieBridge.autoReconnect": { "type": "boolean", "default": true, "scope": "application", "description": "意外断线后最多重试 3 次；手动断开后不重连。" }
+      }
+    }
+  }
+}
