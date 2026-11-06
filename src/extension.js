@@ -1,226 +1,308 @@
 'use strict';
-const vscode = require('vscode');
-const fs = require('node:fs/promises');
-const path = require('node:path');
-const os = require('node:os');
-const { startProxy, getModels } = require('./proxy');
-const { Tunnel, validateHost } = require('./tunnel');
-const { localClaudeModels, terminalEnv, codexCommand } = require('./agents');
-const { startAuth } = require('./auth');
 
-function activate(context) {
-  const log = vscode.window.createOutputChannel('Magpie Remote Bridge');
-  const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 25);
-  status.command = 'magpieBridge.connect'; status.show();
-  let session; let connecting; let generation = 0; let retryTimer; let disposed = false;
+const { BridgeSession, isCancelled } = require('./session');
+const { startProxy, getModels } = require('./proxy');
+const { Tunnel } = require('./tunnel');
+const { startAuth } = require('./auth');
+const { localClaudeModels, terminalEnv, codexCommand } = require('./agents');
+const { readConfig, getGatewayKey, CONNECTION_KEYS } = require('./config');
+const { createHostPicker } = require('./host-picker');
+const { createLogger } = require('./log');
+const { withCancellation } = require('./ui');
+
+/** Wires the VS Code UI to the independently testable bridge lifecycle. */
+function activate(context, dependencies = {}) {
+  const vscode = dependencies.vscode || require('vscode');
+  const t = (...args) => vscode.l10n.t(...args);
+  const channel = vscode.window.createOutputChannel('Magpie Remote Bridge', { log: true });
+  const log = createLogger(channel);
+  const status = vscode.window.createStatusBarItem('magpieBridge.status', vscode.StatusBarAlignment.Left, 25);
+  status.name = 'Magpie Remote Bridge';
+  status.command = 'magpieBridge.menu';
   const terminals = new Set();
-  const cfg = () => {
-    const c = vscode.workspace.getConfiguration('magpieBridge');
-    return { host: c.get('sshHost'), gatewayPort: c.get('gatewayPort'), remotePort: c.get('remotePort'),
-      sshPath: c.get('sshPath'), configFile: c.get('sshConfigFile'), model: c.get('model'),
-      autoConnect: c.get('autoConnect'), autoReconnect: c.get('autoReconnect') };
-  };
-  function render(text, connected = false) {
-    status.text = `$(plug) Magpie: ${text}`;
-    status.tooltip = '本机 Magpie → 当前 Remote-SSH 工作区';
-    status.command = connected ? 'magpieBridge.terminal' : 'magpieBridge.connect';
-  }
-  render('未连接');
-  function authority() {
-    if (!vscode.workspace.isTrusted) throw new Error('请先信任当前工作区');
-    const folders = vscode.workspace.workspaceFolders || [];
-    if (vscode.env.remoteName !== 'ssh-remote' || !folders.length ||
-      !folders[0].uri.authority.startsWith('ssh-remote+')) {
-      throw new Error('请先在 VS Code 中通过 Remote-SSH 打开远端文件夹。首版支持桌面版 VS Code、SSH 与远端 POSIX shell。');
+  const cfg = () => readConfig(vscode.workspace);
+  const key = () => getGatewayKey(context.secrets);
+  const hosts = createHostPicker({ vscode, context, log, t, readFile: dependencies.readFile });
+  let progressOperation;
+  let disposed = false;
+  let latestState = { state: 'disconnected' };
+  const shownErrors = new WeakSet();
+
+  const bridge = new BridgeSession({
+    readConfig: () => ({ ...cfg(), authority: hosts.authority() }),
+    resolveTarget: hosts.resolveTarget,
+    getGatewayKey: key,
+    getModels: dependencies.getModels || getModels,
+    startProxy: dependencies.startProxy || startProxy,
+    startAuth: dependencies.startAuth || startAuth,
+    createTunnel: dependencies.createTunnel || (options => new Tunnel(options)),
+    promptPassword: async (challenge, config, signal) => {
+      const password = await withCancellation(vscode, signal, token => vscode.window.showInputBox({
+      password: true, ignoreFocusOut: true, title: t('Magpie SSH · {0}', config.host),
+      prompt: challenge, placeHolder: t('Used only for this SSH authentication; never saved')
+    }, token));
+      if (password === undefined && bridge.current?.controller.signal === signal) bridge.disconnect();
+      return password;
+    },
+    log,
+    clock: dependencies.clock,
+    reconnect: dependencies.reconnect
+  });
+
+  function stateLabel(event) {
+    switch (event.state) {
+      case 'choosing': return t('Choose SSH host');
+      case 'checking': return t('Checking gateway');
+      case 'connecting': return t('Connecting SSH');
+      case 'probing': return t('Verifying remote access');
+      case 'connected': return t('Connected');
+      case 'reconnecting': return t('Reconnecting {0}/{1}', event.attempt, event.maxAttempts);
+      case 'failed': return t('Connection failed');
+      default: return t('Disconnected');
     }
-    return folders[0].uri.authority;
   }
-  async function chooseHost(id, config) {
-    const map = context.globalState.get('hosts', {});
-    if (map[id]) return map[id];
-    const guess = id.slice('ssh-remote+'.length);
-    const candidates = new Set([config.host, /^[\w.@-]+$/.test(guess) ? guess : ''].filter(Boolean));
-    try {
-      const contents = await fs.readFile(config.configFile || path.join(os.homedir(), '.ssh', 'config'), 'utf8');
-      for (const line of contents.split(/\r?\n/)) {
-        const match = /^\s*Host\s+(.+?)(?:\s+#.*)?$/i.exec(line);
-        if (match) for (const item of match[1].split(/\s+/)) if (/^[\w.@-]+$/.test(item)) candidates.add(item);
-      }
-    } catch { /* Include/Match or a non-default file can be entered manually. */ }
-    const manual = '输入其他 SSH Host…';
-    const selected = await vscode.window.showQuickPick([...candidates, manual], {
-      title: '选择当前 Remote-SSH 工作区对应的 Host',
-      placeHolder: '必须与当前远端工作区是同一服务器和用户（使用本机 SSH 配置）'
-    });
-    if (!selected) return;
-    const host = selected === manual ? await vscode.window.showInputBox({
-      title: '当前工作区的 SSH Host', prompt: '输入本机 ~/.ssh/config 的 Host 别名或 user@host',
-      validateInput: value => { try { validateHost(value); } catch (e) { return e.message; } }
-    }) : selected;
-    if (!host) return;
-    validateHost(host);
-    await context.globalState.update('hosts', { ...map, [id]: host });
-    return host;
+
+  function render(event = latestState) {
+    latestState = event;
+    const supported = vscode.env.remoteName === 'ssh-remote' && Boolean(vscode.workspace.workspaceFolders?.length);
+    if (supported) status.show(); else status.hide();
+    const busy = ['choosing', 'checking', 'connecting', 'probing', 'reconnecting'].includes(event.state);
+    status.text = `${busy ? '$(sync~spin)' : '$(plug)'} Magpie: ${stateLabel(event)}`;
+    status.tooltip = event.session?.config?.host
+      ? t('SSH: {0}\nRemote API: http://127.0.0.1:{1}\nClick for bridge actions', event.session.config.host, event.session.config.remotePort)
+      : t('Use your local Magpie gateway in this Remote-SSH workspace. Click for actions.');
+    status.backgroundColor = event.state === 'failed' ? new vscode.ThemeColor('statusBarItem.warningBackground') : undefined;
+    void vscode.commands.executeCommand('setContext', 'magpieBridge.connected', event.state === 'connected');
+    void vscode.commands.executeCommand('setContext', 'magpieBridge.busy', busy);
   }
-  function disconnect() {
-    generation++; clearTimeout(retryTimer); retryTimer = undefined;
-    const old = session; session = undefined;
-    old?.tunnel.stop(); old?.proxy.close(); old?.config.auth?.close(); old?.cancel?.dispose(true);
+  bridge.on('state', render);
+  bridge.on('disconnected', () => {
     for (const terminal of terminals) terminal.dispose();
     terminals.clear();
-    render('未连接');
-  }
-  function watch(s, tunnel) {
-    tunnel.on('closed', message => {
-      if (session !== s || s.tunnel !== tunnel || !s.ready) return;
-      s.ready = false; render('连接中断'); log.appendLine(message);
-      if (cfg().autoReconnect) scheduleReconnect(s);
-      else { disconnect(); vscode.window.showWarningMessage('Magpie 桥接已断开，请重新连接。'); }
-    });
-  }
-  function scheduleReconnect(s) {
-    if (session !== s) return;
-    if (s.attempts >= 3) {
-      disconnect(); vscode.window.showWarningMessage('Magpie 重连失败，请检查 SSH 后手动连接。'); return;
-    }
-    const attempt = ++s.attempts;
-    render(`重连 ${attempt}/3`);
-    retryTimer = setTimeout(async () => {
-      if (session !== s) return;
-      const tunnel = new Tunnel({ ...s.config, localPort: s.proxy.port });
-      s.tunnel = tunnel; watch(s, tunnel);
-      try {
-        await tunnel.start();
-        if (session !== s) return tunnel.stop();
-        await tunnel.probe(s.proxy.token);
-        if (session !== s) return tunnel.stop();
-        s.ready = true;
-        // Reset after a stable minute; a flapping connection still reaches the retry limit.
-        const stable = setTimeout(() => { if (session === s && s.ready && s.tunnel === tunnel) s.attempts = 0; }, 60000);
-        stable.unref();
-        render('已连接', true); log.appendLine('SSH 已重连，原终端令牌继续有效。');
-      } catch (e) {
-        tunnel.stop();
-        if (session !== s) return;
-        log.appendLine(e.message); scheduleReconnect(s);
-      }
-    }, Math.min(1000 * 2 ** (attempt - 1), 8000));
-  }
+  });
+
   async function connect() {
-    if (disposed) return;
-    if (session?.ready) return session;
-    if (connecting) return connecting;
-    if (session) disconnect();
-    const id = authority(); const config = cfg(); const epoch = generation;
-    connecting = (async () => {
-      const host = await chooseHost(id, config);
-      if (!host || generation !== epoch || disposed) return;
-      config.host = host;
-      const key = (await context.secrets.get('gatewayKey')) || 'magpie';
-      render('检查本机网关');
-      await getModels(config.gatewayPort, key); // Read-only; no model inference or billing.
-      if (generation !== epoch || disposed) return;
-      const proxy = await startProxy({ gatewayPort: config.gatewayPort, upstreamKey: key });
-      if (generation !== epoch || disposed) { proxy.close(); return; }
-      const cancel = new vscode.CancellationTokenSource();
-      try {
-        config.auth = await startAuth(challenge => vscode.window.showInputBox({ password: true, ignoreFocusOut: true,
-          title: `Magpie SSH · ${host}`, prompt: challenge,
-          placeHolder: '仅用于本次 SSH 认证，不保存密码' }, cancel.token));
-      } catch (e) { proxy.close(); cancel.dispose(true); throw e; }
-      if (generation !== epoch || disposed) { proxy.close(); config.auth.close(); cancel.dispose(true); return; }
-      const tunnel = new Tunnel({ ...config, localPort: proxy.port });
-      const s = { proxy, tunnel, config, cancel, ready: false, attempts: 0 };
-      session = s; watch(s, tunnel); render('建立 SSH 隧道');
-      try {
-        await tunnel.start();
-        if (session !== s) { tunnel.stop(); return; }
-        await tunnel.probe(proxy.token);
-        if (session !== s) { tunnel.stop(); return; }
-        s.ready = true; render('已连接', true);
-        log.appendLine(`已连接 ${host}:127.0.0.1:${config.remotePort} → 本机 Magpie:${config.gatewayPort}；远端 HTTP 检测通过。`);
-        return s;
-      } catch (e) {
-        if (session === s) disconnect();
-        throw e;
+    const work = bridge.connect();
+    if (progressOperation?.work === work) return progressOperation.ui;
+    if (bridge.current?.ready) return work;
+    const current = bridge.current;
+    const operation = { work };
+    progressOperation = operation;
+    operation.ui = vscode.window.withProgress({
+      location: vscode.ProgressLocation.Notification, title: t('Magpie Remote Bridge'), cancellable: true
+    }, async (progress, token) => {
+      const update = event => progress.report({ message: stateLabel(event) });
+      bridge.on('state', update);
+      update(latestState);
+      const cancellation = token.onCancellationRequested(() => {
+        if (bridge.current === current) bridge.disconnect();
+      });
+      if (token.isCancellationRequested && bridge.current === current) bridge.disconnect();
+      try { return await work; } finally {
+        cancellation.dispose();
+        bridge.off('state', update);
       }
-    })();
-    try { return await connecting; }
-    catch (e) { if (!session) render('连接失败'); throw e; }
-    finally { connecting = undefined; }
-  }
-  async function openTerminal(agent) {
-    authority();
-    const s = await connect(); if (!s?.ready || session !== s) return;
-    const config = { ...s.config, model: cfg().model, token: s.proxy.token };
-    if (agent === 'codex' && !config.model) {
-      await chooseModel(); config.model = cfg().model;
-      if (!config.model) return;
-    }
-    const models = await localClaudeModels(config.gatewayPort);
-    if (session !== s || !s.ready) return;
-    const terminal = vscode.window.createTerminal({
-      name: `Magpie · ${agent || 'Remote'}`, env: terminalEnv(config, models),
-      cwd: vscode.workspace.workspaceFolders[0].uri
+    }).finally(() => {
+      if (progressOperation === operation) progressOperation = undefined;
     });
-    terminals.add(terminal); terminal.show();
+    return operation.ui;
+  }
+
+  function hint(error, stage) {
+    if (error.code === 'ENOENT') return t('OpenSSH could not be started. Check the SSH executable setting.');
+    if (/remote port forwarding failed|cannot listen to port/i.test(error.message)) {
+      return t('The remote port is unavailable. Choose another remote port or check SSH forwarding permissions.');
+    }
+    if (stage === 'configuration') return t('Bridge settings are invalid. Check the port numbers and local SSH paths.');
+    if (error.code === 'INVALID_KEY') return t('The key must not contain control characters.');
+    if (stage === 'gateway' || stage === 'proxy') return t('The local Magpie gateway is unavailable. Start Magpie and check its port and gateway key.');
+    if (stage === 'host' || !vscode.workspace.isTrusted || vscode.env.remoteName !== 'ssh-remote') {
+      return t('Open a trusted Remote-SSH folder and choose the matching SSH server and user.');
+    }
+    if (stage === 'probe') return t('Remote HTTP verification failed. Check that curl is installed and the SSH target matches this workspace.');
+    if (stage === 'reconnect') return t('Automatic reconnect failed. Check your network and SSH connection, then connect again.');
+    return t('The bridge operation failed. Check the SSH settings and connection log for details.');
+  }
+
+  async function showFailure(error, stage = error.bridgeStage, retryCommand = 'connect') {
+    if (disposed || isCancelled(error)) return;
+    if (shownErrors.has(error)) return;
+    shownErrors.add(error);
+    log.error(error);
+    const retry = t('Retry');
+    const settings = t('Open Settings');
+    const change = t('Change SSH Host');
+    const logs = t('Show Logs');
+    let selected;
+    try { selected = await vscode.window.showErrorMessage(hint(error, stage), retry, settings, change, logs); }
+    finally { shownErrors.delete(error); }
+    if (disposed) return;
+    if (selected === retry) await run(retryCommand);
+    if (selected === settings) await run('settings');
+    if (selected === change) await run('changeHost');
+    if (selected === logs) log.show();
+  }
+  bridge.on('failure', (error, stage) => { void showFailure(error, stage); });
+
+  async function chooseModel(requireModel = false) {
+    const config = cfg();
+    const gatewayKey = await key();
+    if (gatewayKey !== 'magpie') log.protect(gatewayKey);
+    let models;
+    try { models = await (dependencies.getModels || getModels)(config.gatewayPort, gatewayKey); }
+    catch (error) { error.bridgeStage = 'gateway'; throw error; }
+    const items = models.map(model => ({ label: model, description: model === config.model ? t('Current selection') : undefined, model }));
+    if (!requireModel) items.unshift({ label: t('Use local Magpie model defaults'), description: t('Clear the override for new sessions'), model: '' });
+    const selected = await vscode.window.showQuickPick(items, {
+      title: t('Choose a model for new agent sessions'), matchOnDescription: true,
+      placeHolder: models.length ? t('Existing sessions keep their model') : t('No models found. Check the Magpie model configuration.')
+    });
+    if (!selected) return false;
+    await vscode.workspace.getConfiguration('magpieBridge').update('model', selected.model, vscode.ConfigurationTarget.Global);
+    return true;
+  }
+
+  async function openTerminal(agent) {
+    hosts.authority();
+    const session = await connect();
+    if (!session?.ready || bridge.current !== session) return;
+    if (agent === 'codex' && !cfg().model && !(await chooseModel(true))) return;
+    const config = { ...session.config, model: cfg().model, token: session.proxy.token };
+    const models = await (dependencies.localClaudeModels || localClaudeModels)(config.gatewayPort);
+    if (bridge.current !== session || !session.ready) return;
+    const terminal = vscode.window.createTerminal({
+      name: agent ? `Magpie · ${agent === 'claude' ? 'Claude Code' : 'Codex CLI'}` : t('Magpie · Remote Terminal'),
+      env: terminalEnv(config, models), cwd: vscode.workspace.workspaceFolders[0].uri,
+      isTransient: true
+    });
+    terminals.add(terminal);
+    terminal.show();
     if (agent === 'claude') terminal.sendText('claude', true);
     if (agent === 'codex') terminal.sendText(codexCommand(config), true);
   }
-  async function chooseModel() {
-    const c = cfg(); const key = (await context.secrets.get('gatewayKey')) || 'magpie';
-    const models = await getModels(c.gatewayPort, key);
-    const selected = await vscode.window.showQuickPick(models, { title: '选择 Magpie 模型（新启动的 agent 会话生效）' });
-    if (selected) await vscode.workspace.getConfiguration('magpieBridge').update('model', selected, vscode.ConfigurationTarget.Global);
-  }
+
   async function diagnose() {
-    const c = cfg(); const key = (await context.secrets.get('gatewayKey')) || 'magpie';
-    const models = await getModels(c.gatewayPort, key);
-    if (session?.ready) await session.tunnel.probe(session.proxy.token);
-    vscode.window.showInformationMessage(`本机 Magpie 正常，${models.length} 个模型；${session?.ready ? '远端 → 本机 HTTP 检测通过' : '隧道未连接'}。`);
+    const config = cfg();
+    const gatewayKey = await key();
+    if (gatewayKey !== 'magpie') log.protect(gatewayKey);
+    let models;
+    try { models = await (dependencies.getModels || getModels)(config.gatewayPort, gatewayKey); }
+    catch (error) { error.bridgeStage = 'gateway'; throw error; }
+    const session = bridge.current;
+    if (session?.ready) {
+      try { await session.tunnel.probe(session.proxy.token, { signal: session.controller.signal }); }
+      catch (error) { error.bridgeStage = 'probe'; throw error; }
+    }
+    const verified = session?.ready && bridge.current === session;
+    log.info(`Diagnostic: gateway port ${config.gatewayPort}; models ${models.length}; remote HTTP ${verified ? 'verified' : 'not connected'}`);
+    await vscode.window.showInformationMessage(verified
+      ? t('Magpie is healthy: {0} models. Remote HTTP access verified.', models.length)
+      : t('Magpie is healthy: {0} models. The remote tunnel is not connected.', models.length));
   }
+
   async function setKey() {
-    const key = await vscode.window.showInputBox({ password: true, ignoreFocusOut: true,
-      title: 'Magpie 本机网关密钥（留空清除）', prompt: '仅存储在 VS Code SecretStorage，不会发送给远端' });
-    if (key === undefined) return;
-    if (/[\r\n]/.test(key)) throw new Error('密钥不能包含换行');
-    if (key) await context.secrets.store('gatewayKey', key); else await context.secrets.delete('gatewayKey');
-    disconnect(); vscode.window.showInformationMessage('网关密钥已更新，下次连接生效。');
+    const value = await vscode.window.showInputBox({
+      password: true, ignoreFocusOut: true, title: t('Local Magpie gateway key'),
+      prompt: t('Stored in local VS Code SecretStorage. Leave empty to clear.'),
+      validateInput: input => /[\x00-\x1f\x7f]/.test(input) ? t('The key must not contain control characters.') : undefined
+    });
+    if (value === undefined) return;
+    if (/[\x00-\x1f\x7f]/.test(value)) {
+      const error = new Error(t('The key must not contain control characters.'));
+      error.code = 'INVALID_KEY';
+      throw error;
+    }
+    if (value) await context.secrets.store('gatewayKey', value);
+    else await context.secrets.delete('gatewayKey');
+    bridge.disconnect();
+    await vscode.window.showInformationMessage(t('Gateway key updated. Connect again to use it.'));
   }
+
+  async function menu() {
+    const ready = Boolean(bridge.current?.ready);
+    const items = [
+      { label: '$(terminal) ' + t('Open Remote Terminal'), command: 'terminal' },
+      { label: '$(terminal) ' + t('Start Claude Code'), command: 'claude' },
+      { label: '$(terminal) ' + t('Start Codex CLI'), command: 'codex' },
+      { label: '$(list-selection) ' + t('Choose Model'), command: 'model' },
+      { label: '$(debug-disconnect) ' + t('Disconnect or Cancel'), command: 'disconnect' },
+      { label: '$(plug) ' + t('Connect'), command: 'connect' },
+      { label: '$(pulse) ' + t('Check Gateway and Tunnel'), command: 'diagnose' },
+      { label: '$(copy) ' + t('Copy Connection Details'), command: 'copyConnection' },
+      { label: '$(server) ' + t('Change SSH Host'), command: 'changeHost' },
+      { label: '$(output) ' + t('Show Logs'), command: 'logs' },
+      { label: '$(gear) ' + t('Open Settings'), command: 'settings' },
+      { label: '$(key) ' + t('Set Gateway Key'), command: 'key' },
+      { label: '$(question) ' + t('Getting Started'), command: 'gettingStarted' }
+    ];
+    const selected = await vscode.window.showQuickPick(items, {
+      title: ready ? t('Magpie · Connected to {0}', bridge.current.config.host) : t('Magpie · Bridge Actions'),
+      placeHolder: t('Model and configuration changes apply to new sessions')
+    });
+    if (selected) return run(selected.command);
+  }
+
   const commands = {
-    connect, disconnect, terminal: () => openTerminal(), claude: () => openTerminal('claude'),
-    codex: () => openTerminal('codex'), model: chooseModel, diagnose, key: setKey, logs: () => log.show(),
+    connect, disconnect: () => bridge.disconnect(), menu,
+    terminal: () => openTerminal(), claude: () => openTerminal('claude'), codex: () => openTerminal('codex'),
+    model: () => chooseModel(), diagnose, key: setKey, logs: () => log.show(),
+    settings: () => vscode.commands.executeCommand('workbench.action.openSettings', 'magpieBridge'),
+    gettingStarted: () => vscode.commands.executeCommand('workbench.action.openWalkthrough', 'wkoa.magpie-remote-bridge#magpieBridge.setup', false),
     changeHost: async () => {
-      const id = authority(); disconnect();
-      const map = { ...context.globalState.get('hosts', {}) }; delete map[id];
-      await context.globalState.update('hosts', map);
+      const id = hosts.authority();
+      bridge.disconnect();
+      await hosts.forget(id);
       return connect();
     },
     copyConnection: async () => {
-      const s = await connect(); if (!s?.ready || session !== s) return;
-      const base = `http://127.0.0.1:${s.config.remotePort}`;
+      const session = await connect();
+      if (!session?.ready || bridge.current !== session) return;
+      const base = `http://127.0.0.1:${session.config.remotePort}`;
       await vscode.env.clipboard.writeText(JSON.stringify({
         openaiBaseUrl: `${base}/v1`, anthropicBaseUrl: base,
-        apiKey: s.proxy.token, model: cfg().model || undefined
+        apiKey: session.proxy.token, model: cfg().model || undefined
       }, null, 2));
-      vscode.window.showInformationMessage('远端接入地址及本次连接的临时令牌已复制；重新连接后需更新令牌。');
+      await vscode.window.showInformationMessage(t('Connection details copied, including the temporary token. Manual disconnect or window reload revokes it.'));
     }
   };
-  for (const [name, fn] of Object.entries(commands)) {
-    context.subscriptions.push(vscode.commands.registerCommand(`magpieBridge.${name}`, async () => {
-      try { return await fn(); } catch (e) {
-        log.appendLine(e.message); vscode.window.showErrorMessage(`Magpie: ${e.message}`);
-      }
-    }));
+
+  async function run(name) {
+    try { return await commands[name](); } catch (error) { await showFailure(error, error.bridgeStage, name); }
   }
-  context.subscriptions.push(log, status,
+  for (const name of Object.keys(commands)) {
+    context.subscriptions.push(vscode.commands.registerCommand(`magpieBridge.${name}`, () => run(name)));
+  }
+  context.subscriptions.push(status, channel,
     vscode.window.onDidCloseTerminal(terminal => terminals.delete(terminal)),
-    { dispose: () => { disposed = true; disconnect(); } });
-  if (cfg().autoConnect) {
-    try {
-      const id = authority();
-      if (context.globalState.get('hosts', {})[id]) connect().catch(e => log.appendLine(e.message));
-    } catch { /* Wait for an explicit connection in a supported workspace. */ }
+    vscode.workspace.onDidChangeConfiguration(async event => {
+      if (!bridge.current?.ready || !CONNECTION_KEYS.some(name => event.affectsConfiguration(`magpieBridge.${name}`))) return;
+      const expectedSession = bridge.current;
+      const reconnect = t('Reconnect');
+      const selected = await vscode.window.showInformationMessage(t('Bridge connection settings changed. Reconnect to apply them.'), reconnect);
+      if (selected === reconnect && !disposed && bridge.current === expectedSession && expectedSession.ready) {
+        bridge.disconnect();
+        await run('connect');
+      }
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      try {
+        if (bridge.current?.config?.authority && bridge.current.config.authority !== hosts.authority()) bridge.disconnect();
+      } catch { bridge.disconnect(); }
+      render();
+    }),
+    { dispose() { disposed = true; bridge.dispose(); } }
+  );
+  render();
+
+  if (vscode.extensions.getExtension('local-tools.magpie-remote-bridge') && !context.globalState.get('legacyWarningShown')) {
+    void context.globalState.update('legacyWarningShown', true);
+    const show = t('Show Extension');
+    void vscode.window.showWarningMessage(t('An older Magpie Remote Bridge extension is installed. Disable or uninstall it to avoid duplicate commands.'), show)
+      .then(selected => { if (selected === show) return vscode.commands.executeCommand('workbench.extensions.search', '@id:local-tools.magpie-remote-bridge'); });
   }
+  try {
+    if (cfg().autoConnect && hosts.hasSaved(hosts.authority())) void run('connect');
+  } catch { /* Auto-connect only runs in an already configured trusted SSH folder. */ }
 }
+
 module.exports = { activate };

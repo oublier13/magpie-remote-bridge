@@ -8,7 +8,17 @@ Use your local Magpie AI gateway from a VS Code Remote-SSH workspace. Keep provi
 
 默认连接本机 `http://127.0.0.1:3425`，在远端提供 `http://127.0.0.1:13425`。
 
-从旧的 `local-tools.magpie-remote-bridge` VSIX 迁移时，请先断开桥接并禁用或卸载旧插件，再安装发布者为 `wkoa` 的版本。新版本的扩展 ID 为 `wkoa.magpie-remote-bridge`，原来的 Host 映射和 SecretStorage 不会跨扩展 ID 自动迁移。
+### v0.2 使用体验
+
+- 点击状态栏 **Magpie** 打开统一菜单，连接、启动终端、选择模型、诊断和设置都在这里。
+- 连接时显示阶段和取消按钮。取消会停止检查、关闭密码输入框并释放本次连接资源。
+- 自动重连期间，终端命令等待当前重连，保留已有终端和临时令牌；重试耗尽后才撤销会话。
+- 出错时提供“重试”“打开设置”“更改 SSH Host”“显示日志”等操作，日志带时间和级别并隐藏已知密钥。
+- 支持简体中文和英文界面，自动跟随 VS Code 语言；可通过 **Magpie: 使用入门** 查看引导。
+
+**English quick start:** Start Magpie locally, install this extension on the local side, open a remote folder with Remote-SSH, then run **Magpie: Connect Local Gateway to Remote**. Select the same SSH server and user as your workspace. Use the status bar menu to launch your remote agent. The UI follows VS Code's language; Simplified Chinese and English are included.
+
+从旧的 `local-tools.magpie-remote-bridge` VSIX 迁移时，请先断开桥接并禁用或卸载旧插件，再安装发布者为 `wkoa` 的版本。新版本的扩展 ID 为 `wkoa.magpie-remote-bridge`，原来的 Host 映射和 SecretStorage 不会跨扩展 ID 自动迁移。插件会检测旧发布者扩展并提醒处理，但不会自动卸载或修改其他扩展。
 
 ```text
 远端 agent（CLI / 支持自定义地址的扩展）
@@ -24,10 +34,10 @@ Use your local Magpie AI gateway from a VS Code Remote-SSH workspace. Keep provi
 1. 本机启动 Magpie，确保网关运行在 `127.0.0.1:3425`。
 2. 在本机 VS Code 搜索 `@id:wkoa.magpie-remote-bridge` 并安装；也可选择 **Install from VSIX… / 从 VSIX 安装…**，安装下载的 `magpie-remote-bridge-<版本>.vsix`。扩展应安装在本机；它通过 `extensionKind: ["ui"]` 明确运行在本机。
 3. 使用 VS Code **Remote-SSH** 打开远端项目文件夹。
-4. 命令面板执行 **Magpie: 连接本机网关到远端**。首次选择与当前工作区对应的 SSH Host。每个远端 authority 的选择会在本机记住。
+4. 命令面板执行 **Magpie: 连接本机网关到远端**。首次选择与当前工作区对应的 SSH Host，首项会从当前工作区解析，保留用户名及显式 SSH 端口。每个远端 authority 的选择会在本机记住。
 5. 执行 **Magpie: 在远端启动 Claude Code** 或 **Magpie: 在远端启动 Codex CLI**。终端工作目录就是远端项目，文件操作和命令执行发生在远端。
 
-Claude Code 会读取本机 `~/.claude/settings.json` 中指向当前 Magpie 网关的模型环境项，仅同步白名单中的模型字段。也可以执行 **Magpie: 选择远端 agent 的模型** 显式指定。Codex 首次启动需选择一个模型，使用 `-c` 临时指定独立 provider，不修改远端 `~/.codex/config.toml`。
+Claude Code 会读取本机 `~/.claude/settings.json` 中指向当前 Magpie 网关的模型环境项，仅同步白名单中的模型字段。也可以执行 **Magpie: 选择远端 agent 的模型** 显式指定，或在选择器中选择“使用本机 Magpie 的默认模型配置”清除覆盖设置。Codex 首次启动需选择一个模型，使用 `-c` 临时指定独立 provider，不修改远端 `~/.codex/config.toml`。
 
 这些启动命令要求远端已安装对应的 `claude` / `codex` 可执行文件。插件自动处理网关连接和启动参数，不负责安装 agent 本身。选择模型只影响之后启动的会话，不切换已运行会话，也不修改本机 Magpie 的模型选择。
 
@@ -57,8 +67,11 @@ Claude Code 会读取本机 `~/.claude/settings.json` 中指向当前 Magpie 网
 | Magpie: 选择远端 agent 的模型 | 从本机 Magpie 实时模型目录选择 |
 | Magpie: 检查网关与隧道 | 只读检查本机目录及远端到本机的 HTTP 链路 |
 | Magpie: 复制远端扩展接入信息 | 地址及本次会话临时令牌复制到剪贴板 |
-| Magpie: 设置本机网关密钥（可选） | 密钥保存在本机 VS Code SecretStorage |
-| Magpie: 显示连接日志 | 查看连接错误，不记录提示词、响应正文或令牌 |
+| Magpie: 设置本机网关密钥 | 密钥保存在本机 VS Code SecretStorage |
+| Magpie: 显示连接日志 | 查看带时间和级别的连接日志，不记录提示词、响应正文或令牌 |
+| Magpie: 显示桥接操作 | 打开状态栏操作菜单 |
+| Magpie: 打开桥接设置 | 定位本机桥接配置 |
+| Magpie: 使用入门 | 打开安装与连接引导 |
 
 ## 配置
 
@@ -79,14 +92,16 @@ Claude Code 会读取本机 `~/.claude/settings.json` 中指向当前 Magpie 网
 
 `sshHost` 是首次选择时的候选值；已保存的工作区映射优先。选错 Host 时执行 **Magpie: 更改当前工作区的 SSH Host**。SSH 配置中的 Include / Match / ProxyJump 仍由 OpenSSH 解析；列表只枚举主文件的普通 Host，其他别名手动输入即可。
 
-修改端口、SSH 路径或 SSH config 后，手动断开再连接。多窗口连接同一个服务器时给各窗口选择不同的远端端口；当前版本端口配置为本机全局值，修改后仅影响新连接。
+支持普通 Host 别名和 Remote-SSH 编码后的连接地址（包括 `user@host`、大小写主机名及显式端口）。v0.1.3 会自动修复旧版误存为 `7b22…` 的当前工作区映射。手动输入 IP 时请包含正确的远端用户名，例如 `user@host`；省略用户名会使用 SSH config 或本机用户名。手动输入支持 `user@host:2222`、`user@[2001:db8::1]:2222` 以及无端口的 IPv6；也可以在 SSH config 中配置 `Port` 并选择别名。端口不会被当成主机名传给 OpenSSH。Host 映射按工作区分别保存，旧版共享映射会在读取时迁移。
+
+修改端口、SSH 路径或 SSH config 后，插件会提示重新连接，当前会话在用户选择重连之前继续沿用原配置。SSH config 路径支持 `~/`；Remote-SSH 若使用自定义 config 文件，应将桥接设置指向同一文件。多窗口连接同一个服务器时给各窗口选择不同的远端端口；当前版本端口配置为本机全局值，修改后仅影响新连接。
 
 自动连接默认关闭。开启后，仅对已经明确选择并保存 Host 的可信 SSH 工作区生效。意外断线最多退避重连三次，保持当前代理和令牌；稳定一分钟后恢复重试次数。手动断开或重载窗口会撤销本次令牌，关闭插件创建的终端，下一次连接产生新令牌。
 
 ## 支持范围和前提
 
 - 桌面版 VS Code 1.90+，本机 OpenSSH 8.7+，Remote-SSH；远端为 POSIX shell，有 `cat`、`printf` 和 `curl`。
-- 本机能够 SSH 登录同一个远端用户。先通过 Remote-SSH 完成主机指纹确认；插件严格验证已知主机。macOS/Linux 支持安全输入框中的 SSH 密码、key passphrase 或 keyboard-interactive challenge；密码不落盘。Windows 暂时仅支持 key / ssh-agent 非交互登录。
+- 本机能够 SSH 登录同一个远端用户。先通过 Remote-SSH 完成主机指纹确认；插件严格验证已知主机。macOS/Linux 支持安全输入框中的 SSH 密码、key passphrase 或 keyboard-interactive challenge；密码不落盘。Windows 暂时仅支持 key / ssh-agent 非交互登录；若系统内置 OpenSSH 低于 8.7，请安装满足要求的版本并设置 `magpieBridge.sshPath`。
 - 使用独立 SSH 连接，继承 OpenSSH config（包括 ProxyJump、IdentityFile、Port 等），不依赖 Remote-SSH 私有 API。在 macOS/Linux 的私有临时目录创建本次连接专用的 control socket，连通性检测复用同一条认证会话，不复用其他软件的 SSH master。
 - 服务器必须允许 remote TCP forwarding，且远端端口空闲。服务器 `GatewayPorts` 应为 `no`（默认）或 `clientspecified`；管理员强制 `yes` 可能扩大监听地址。
 - API 白名单：`GET /v1/models`、`GET /v1/codex/models`，以及 `POST /v1/chat/completions`、`/v1/responses`、`/v1/responses/compact`、`/v1/messages`、`/v1/messages/count_tokens`、`/v1/embeddings`。
@@ -106,6 +121,7 @@ SSH 密码通过 OpenSSH ASKPASS 与本机随机令牌保护的回环 IPC 传递
 
 ## 故障排查
 
+- **Could not resolve hostname 7b22…**：旧版误把 Remote-SSH 编码地址当成了主机名，升级到 v0.1.3 后重新连接。若安装的是旧发布者 `local-tools`，按上方迁移步骤替换，避免两个版本同时注册命令。
 - **本机网关不可用**：确认 Magpie 已打开、网关端口正确；执行诊断命令。
 - **Permission denied / Host key verification failed**：先通过 Remote-SSH 确认目标用户与主机指纹；macOS/Linux 在插件的安全输入框完成认证。硬件触摸或特殊企业 MFA 流程仍可能需要额外配置。
 - **remote port forwarding failed**：检查远端 13425 是否占用，以及 sshd 的 `AllowTcpForwarding` / `PermitListen`。
@@ -123,6 +139,8 @@ npm run check
 npm test
 npm run package
 ```
+
+贡献说明和模块职责见 [CONTRIBUTING.md](CONTRIBUTING.md)。`npm run check` 检查全部源文件语法、翻译完整性和版本一致性；`npm run test:coverage` 输出实际代码覆盖率。GitHub Actions 已配置 Node.js 22/24 与 macOS/Linux/Windows 检查矩阵，工作流实际运行结果以仓库 CI 为准。
 
 F5 使用 `.vscode/launch.json` 启动本机 Extension Development Host，再通过 Remote-SSH 打开测试项目。测试覆盖代理鉴权、路由限制、SSE 流式、SSH readiness / 错误分支、凭据传递及 CLI 参数转义。网络测试只访问本机模拟服务，不消费模型额度。
 

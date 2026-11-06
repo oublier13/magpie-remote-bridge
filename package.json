@@ -1,8 +1,8 @@
 {
   "name": "magpie-remote-bridge",
   "displayName": "Magpie Remote Bridge",
-  "description": "Reuse your local Magpie AI gateway in Remote-SSH. 在远端复用本机模型、账号与网关。",
-  "version": "0.1.2",
+  "description": "%extension.description%",
+  "version": "0.2.0",
   "publisher": "wkoa",
   "license": "MIT",
   "author": "wkoa",
@@ -51,54 +51,75 @@
   },
   "scripts": {
     "test": "node --test test/*.test.js",
-    "check": "node --check src/extension.js && node --check src/proxy.js && node --check src/tunnel.js && node --check src/agents.js && node --check src/auth.js && node --check src/askpass-client.js",
-    "package": "node scripts/package.js"
+    "check": "node scripts/check.js",
+    "package": "node scripts/package.js",
+    "test:coverage": "node --test --experimental-test-coverage test/*.test.js"
   },
   "contributes": {
     "commands": [
       {
         "command": "magpieBridge.connect",
-        "title": "Magpie: 连接本机网关到远端"
+        "title": "%command.connect%",
+        "enablement": "remoteName == ssh-remote && isWorkspaceTrusted && workspaceFolderCount != 0"
       },
       {
         "command": "magpieBridge.disconnect",
-        "title": "Magpie: 断开远端桥接"
+        "title": "%command.disconnect%",
+        "enablement": "remoteName == ssh-remote && isWorkspaceTrusted && workspaceFolderCount != 0"
       },
       {
         "command": "magpieBridge.changeHost",
-        "title": "Magpie: 更改当前工作区的 SSH Host"
+        "title": "%command.changeHost%",
+        "enablement": "remoteName == ssh-remote && isWorkspaceTrusted && workspaceFolderCount != 0"
       },
       {
         "command": "magpieBridge.terminal",
-        "title": "Magpie: 打开预配置的远端终端"
+        "title": "%command.terminal%",
+        "enablement": "remoteName == ssh-remote && isWorkspaceTrusted && workspaceFolderCount != 0"
       },
       {
         "command": "magpieBridge.claude",
-        "title": "Magpie: 在远端启动 Claude Code"
+        "title": "%command.claude%",
+        "enablement": "remoteName == ssh-remote && isWorkspaceTrusted && workspaceFolderCount != 0"
       },
       {
         "command": "magpieBridge.codex",
-        "title": "Magpie: 在远端启动 Codex CLI"
+        "title": "%command.codex%",
+        "enablement": "remoteName == ssh-remote && isWorkspaceTrusted && workspaceFolderCount != 0"
       },
       {
         "command": "magpieBridge.model",
-        "title": "Magpie: 选择远端 agent 的模型"
+        "title": "%command.model%"
       },
       {
         "command": "magpieBridge.diagnose",
-        "title": "Magpie: 检查网关与隧道"
+        "title": "%command.diagnose%"
       },
       {
         "command": "magpieBridge.copyConnection",
-        "title": "Magpie: 复制远端扩展接入信息"
+        "title": "%command.copyConnection%",
+        "enablement": "remoteName == ssh-remote && isWorkspaceTrusted && workspaceFolderCount != 0"
       },
       {
         "command": "magpieBridge.key",
-        "title": "Magpie: 设置本机网关密钥（可选）"
+        "title": "%command.key%"
       },
       {
         "command": "magpieBridge.logs",
-        "title": "Magpie: 显示连接日志"
+        "title": "%command.logs%"
+      },
+      {
+        "command": "magpieBridge.menu",
+        "title": "%command.menu%",
+        "enablement": "remoteName == ssh-remote && isWorkspaceTrusted && workspaceFolderCount != 0"
+      },
+      {
+        "command": "magpieBridge.settings",
+        "title": "%command.settings%"
+      },
+      {
+        "command": "magpieBridge.gettingStarted",
+        "title": "%command.gettingStarted%"
       }
     ],
     "configuration": {
@@ -108,7 +129,7 @@
           "type": "string",
           "default": "",
           "scope": "application",
-          "description": "本机 SSH config 中的 Host 别名。首次连接可选择或输入。"
+          "description": "%setting.sshHost%"
         },
         "magpieBridge.gatewayPort": {
           "type": "integer",
@@ -116,7 +137,7 @@
           "minimum": 1,
           "maximum": 65535,
           "scope": "application",
-          "description": "本机 127.0.0.1 上的 Magpie 网关端口。"
+          "description": "%setting.gatewayPort%"
         },
         "magpieBridge.remotePort": {
           "type": "integer",
@@ -124,42 +145,125 @@
           "minimum": 1024,
           "maximum": 65535,
           "scope": "application",
-          "description": "远端 127.0.0.1 上的桥接端口，每个窗口使用不同端口可同时连接。"
+          "description": "%setting.remotePort%"
         },
         "magpieBridge.sshPath": {
           "type": "string",
           "default": "ssh",
           "scope": "application",
-          "description": "本机 OpenSSH 可执行文件路径。"
+          "description": "%setting.sshPath%"
         },
         "magpieBridge.sshConfigFile": {
           "type": "string",
           "default": "",
           "scope": "application",
-          "description": "可选 SSH config 文件绝对路径，留空使用 OpenSSH 默认配置。"
+          "description": "%setting.sshConfigFile%"
         },
         "magpieBridge.model": {
           "type": "string",
           "default": "",
           "scope": "application",
-          "description": "远端启动的模型 ID，例如 provider/model；留空时 Claude 沿用本机 Magpie 的模型环境配置。"
+          "description": "%setting.model%"
         },
         "magpieBridge.autoConnect": {
           "type": "boolean",
           "default": false,
           "scope": "application",
-          "description": "在可信 Remote-SSH 工作区中，使用已保存的 SSH Host 自动连接。"
+          "description": "%setting.autoConnect%"
         },
         "magpieBridge.autoReconnect": {
           "type": "boolean",
           "default": true,
           "scope": "application",
-          "description": "意外断线后最多重试 3 次；手动断开后不重连。"
+          "description": "%setting.autoReconnect%"
         }
       }
-    }
+    },
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "magpieBridge.connect",
+          "when": "remoteName == ssh-remote"
+        },
+        {
+          "command": "magpieBridge.disconnect",
+          "when": "remoteName == ssh-remote"
+        },
+        {
+          "command": "magpieBridge.changeHost",
+          "when": "remoteName == ssh-remote"
+        },
+        {
+          "command": "magpieBridge.terminal",
+          "when": "remoteName == ssh-remote"
+        },
+        {
+          "command": "magpieBridge.claude",
+          "when": "remoteName == ssh-remote"
+        },
+        {
+          "command": "magpieBridge.codex",
+          "when": "remoteName == ssh-remote"
+        },
+        {
+          "command": "magpieBridge.copyConnection",
+          "when": "remoteName == ssh-remote"
+        },
+        {
+          "command": "magpieBridge.menu",
+          "when": "remoteName == ssh-remote"
+        }
+      ]
+    },
+    "walkthroughs": [
+      {
+        "id": "magpieBridge.setup",
+        "title": "%setup.title%",
+        "description": "%setup.description%",
+        "steps": [
+          {
+            "id": "gateway",
+            "title": "%setup.gateway.title%",
+            "description": "%setup.gateway.description%",
+            "completionEvents": [
+              "onCommand:magpieBridge.diagnose"
+            ],
+            "media": {
+              "image": "resources/icon.png",
+              "altText": "Magpie Remote Bridge"
+            }
+          },
+          {
+            "id": "connect",
+            "title": "%setup.connect.title%",
+            "description": "%setup.connect.description%",
+            "completionEvents": [
+              "onCommand:magpieBridge.connect"
+            ],
+            "media": {
+              "image": "resources/icon.png",
+              "altText": "Magpie Remote Bridge"
+            }
+          },
+          {
+            "id": "agent",
+            "title": "%setup.agent.title%",
+            "description": "%setup.agent.description%",
+            "completionEvents": [
+              "onCommand:magpieBridge.claude",
+              "onCommand:magpieBridge.codex"
+            ],
+            "media": {
+              "image": "resources/icon.png",
+              "altText": "Magpie Remote Bridge"
+            }
+          }
+        ]
+      }
+    ]
   },
   "devDependencies": {
     "@vscode/vsce": "4.1.0"
-  }
+  },
+  "l10n": "./l10n"
 }

@@ -16,3 +16,6 @@ package-lock.json
 .gitignore
 .vscodeignore
 resources/icon.svg
+
+.editorconfig
+CONTRIBUTING.md
