@@ -19,3 +19,5 @@ resources/icon.svg
 
 .editorconfig
 CONTRIBUTING.md
+**/__pycache__/**
+**/*.pyc

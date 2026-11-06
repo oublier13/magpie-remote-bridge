@@ -7,7 +7,7 @@ const zh = require('../../l10n/bundle.l10n.zh-cn.json');
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve(); };
 
 function fixture(options = {}) {
-  const commands = new Map(), terminals = [], tunnels = [], proxies = [], logs = [], errors = [], infos = [], warnings = [];
+  const commands = new Map(), terminals = [], tunnels = [], proxies = [], sidebars = [], logs = [], errors = [], infos = [], warnings = [];
   const picks = [], inputs = [], notifications = [], progressMessages = [], clipboard = [], executions = [], external = [], listeners = {};
   const status = { show() { this.visible = true; }, hide() { this.visible = false; }, dispose() {} };
   const values = {
@@ -36,7 +36,7 @@ function fixture(options = {}) {
     workspace: {
       isTrusted: options.trusted ?? true,
       workspaceFolders: [{ uri: { scheme: 'vscode-remote', authority: options.authority || 'ssh-remote+my-server', path: '/remote/project' } }],
-      getConfiguration: () => ({ get: (key, fallback) => values[key] ?? fallback, update: async (key, value) => { values[key] = value; } }),
+      getConfiguration: () => ({ get: (key, fallback) => values[key] === undefined ? fallback : values[key], update: async (key, value) => { values[key] = value; } }),
       onDidChangeConfiguration: fn => { listeners.configuration = fn; return disposable; },
       onDidChangeWorkspaceFolders: fn => { listeners.folders = fn; return disposable; }
     },
@@ -73,7 +73,20 @@ function fixture(options = {}) {
       this.checked = agent;
       return options.checkCli ? options.checkCli(this, agent, opts) : `/usr/bin/${agent}`;
     }
+    async codex(request, opts) {
+      (this.codexCalls ||= []).push(request);
+      return options.codex ? options.codex(request, opts) : { ok: true, preserved: [] };
+    }
     stop() { this.stopped = true; }
+  }
+  class FakeSidebar {
+    constructor(session, opts) { this.session = session; this.options = opts; this.version = 'fixture-codex'; sidebars.push(this); }
+    async enable(tunnel, model) {
+      this.model = model;
+      if (options.sidebarEnable) await options.sidebarEnable(this, tunnel, model);
+    }
+    async reconnect(tunnel) { if (options.sidebarReconnect) await options.sidebarReconnect(this, tunnel); }
+    async close() { this.closed = true; }
   }
   activate(context, {
     vscode, readFile: options.readFile || (async () => options.sshConfig || ''),
@@ -84,10 +97,11 @@ function fixture(options = {}) {
     },
     startAuth: options.startAuth || (async () => ({ close() {} })),
     createTunnel: opts => new FakeTunnel(opts), localClaudeModels: async () => ({}),
+    createCodexSidebar: (session, opts) => new FakeSidebar(session, opts),
     clock: options.clock, reconnect: options.reconnect
   });
   return {
-    run: name => commands.get(`magpieBridge.${name}`)(), commands, terminals, tunnels, proxies, errors, logs,
+    run: name => commands.get(`magpieBridge.${name}`)(), commands, terminals, tunnels, proxies, sidebars, errors, logs,
     context, state, picks, inputs, infos, warnings, values, status, secrets, clipboard, notifications, executions, external,
     listeners, vscode, progressMessages, dispose: () => { for (const item of context.subscriptions) item.dispose(); }
   };

@@ -8,7 +8,7 @@ Use your local Magpie AI gateway from a VS Code Remote-SSH workspace. Keep provi
 
 默认连接本机 `http://127.0.0.1:3425`，在远端提供 `http://127.0.0.1:13425`。
 
-### v0.2 使用体验
+## v0.2 使用体验
 
 - 点击状态栏 **Magpie** 打开统一菜单，连接、启动终端、选择模型、诊断和设置都在这里。
 - 连接时显示阶段和取消按钮。取消会停止检查、关闭密码输入框并释放本次连接资源。
@@ -50,6 +50,21 @@ Claude Code 会读取本机 `~/.claude/settings.json` 中指向当前 Magpie 网
 
 **Remote CLI prerequisites (English):** The launcher checks the CLI through the session's private SSH connection before opening an agent terminal. It checks PATH, user bin directories, and interactive login/non-login shell initialization (including nvm), then launches the resolved absolute path with its directory added to PATH for that process. The check is cancellable, has a 15-second timeout, and bounds its output. If the CLI is missing or inspection fails, the bridge stays connected and offers a configured remote terminal, the official installation guide, and retry. Install the CLI on the remote machine and launch again. [Codex](https://github.com/openai/codex) provides a native Linux ARM64 binary without Node.js/npm; [Claude Code](https://code.claude.com/docs/en/setup) has its own official installation instructions. The extension does not download installers or change remote shell configuration.
 
+## Codex 官方 VS Code 侧边栏（v0.3）
+
+在 SSH 主机安装官方 `openai.chatgpt` 扩展后，执行 **Magpie: 连接 Codex 侧边栏（当前远端账户）**，选择模型并新建 Codex 对话。该入口配置侧边栏内置 app-server 使用 Magpie，无需从预配置终端启动。终端中的环境变量不会自动注入侧边栏。
+
+- 本机支持 macOS/Linux，远端支持 Linux x64/ARM64，需 Python 3、curl、支持 Unix socket 反向转发的 OpenSSH/sshd，以及支持 `model_providers.<id>.auth.command` 的官方 Codex 内置版本。启用时会执行严格兼容检查；本机 Windows 暂不支持侧边栏凭据通道，CLI 功能继续可用。
+- 使用官方配置 RPC，只修改远端 `CODEX_HOME/config.toml` 中的模型、默认 provider 和专用的 `magpie_vscode_bridge`。默认 `CODEX_HOME` 为 `~/.codex`；远端 extension host 与 SSH 登录环境必须使用同一目录。不修改第三方扩展文件或 `chatgpt.cliExecutable`；已有自定义 CLI 覆盖时会拒绝启用。
+- **作用域为同一远端账户的 Codex 配置。** 新建 Codex CLI/IDE 会话都可能使用该 provider；已有对话保留原 provider。每个账户只允许一个窗口启用侧边栏桥接，即使 TCP 端口不同也不会覆盖另一个窗口的配置。
+- provider 只保存地址与凭据命令。Codex 通过权限受限的 Unix socket 获取本次临时令牌，socket 经 SSH 转发到本机；令牌不写入配置、脚本、恢复记录或命令参数，不开放无认证 TCP 代理。
+- 保持启用侧边栏的 Magpie 窗口连接。手动断开、重载窗口或重连耗尽会撤销令牌，远端配置保留供恢复。重新连接后执行 **Magpie: 恢复 Codex 原配置（当前远端账户）**，再根据需要重新启用；不会在窗口重载后静默接管旧租约。
+- 恢复通过配置版本检查，只还原仍与插件写入值相同的字段，保留用户后续修改。非敏感恢复记录保存在远端 `CODEX_HOME/.magpie-remote-bridge.json`（0600）；网络中断后仍可恢复。恢复后新建 Codex 对话使用原 provider。
+
+**验证边界：** 已在本机官方内置 app-server 验证配置 RPC、凭据命令认证、新对话 provider 选择及本机模拟 SSE 往返；远端真实侧边栏界面与真实模型请求仍待验收。CLI 的既有验收不能替代侧边栏验收，详见 [验证记录](docs/VALIDATION.md)。
+
+**Codex sidebar (English):** Install the official `openai.chatgpt` extension on the SSH host, run **Magpie: Connect Codex Sidebar (Remote Account)**, and start a new chat. This updates the remote account's Codex provider through its official config RPC. A command obtains the session capability through a private SSH-forwarded Unix socket; credentials are never written to config or command arguments. The remote host needs Python 3, curl and a bundled Codex version with command-based provider auth. macOS/Linux clients and Linux x64/ARM64 servers are supported. One window may own the sidebar provider per remote account. Keep that window connected; after disconnect or reload, reconnect and use **Magpie: Restore Codex Configuration (Remote Account)** before enabling again. Restoration preserves later user edits. Remote sidebar UI and live model acceptance remain pending.
+
 ## 其他终端和远端扩展
 
 **Magpie: 打开预配置的远端终端** 创建一个新的远端终端，注入：
@@ -61,18 +76,20 @@ Claude Code 会读取本机 `~/.claude/settings.json` 中指向当前 Magpie 网
 
 只有支持这些环境变量的程序会自动使用它们。普通 OpenAI-compatible 程序可在这个终端中直接启动。Codex 需要使用插件专用的启动命令，因为单独设置 `OPENAI_BASE_URL` 不保证覆盖已有 provider 和登录配置。
 
-已有的其他远端 VS Code agent 扩展，可以执行 **Magpie: 复制远端扩展接入信息**，将地址和临时 API key 填入它自己的自定义 provider 设置。这些扩展需要支持对应协议和自定义 endpoint。插件不读取或修改第三方扩展的私有配置，也不会影响已经打开的普通终端；终端环境不会注入远端 extension host。
+已有的其他远端 VS Code agent 扩展，可以执行 **Magpie: 复制远端扩展接入信息**，将地址和临时 API key 填入它自己的自定义 provider 设置。这些扩展需要支持对应协议和自定义 endpoint。其他扩展仍需自行配置；上面的 Codex 专用入口通过其官方配置 API 接入。插件不会影响已经打开的普通终端；终端环境不会注入远端 extension host。
 
 ## 命令
 
 | 命令 | 用途 |
-|---|---|
+| --- | --- |
 | Magpie: 连接本机网关到远端 | 检查本机网关，建立隧道，再从远端发起 HTTP 验证 |
 | Magpie: 断开远端桥接 | 结束隧道、关闭代理、销毁插件创建的终端 |
 | Magpie: 更改当前工作区的 SSH Host | 清除当前工作区的映射并重新选择 |
 | Magpie: 打开预配置的远端终端 | 新终端自动携带网关地址和临时令牌 |
 | Magpie: 在远端启动 Claude Code | 使用本机模型环境或显式选择的模型 |
 | Magpie: 在远端启动 Codex CLI | 临时 provider + Responses API + HTTP/SSE |
+| Magpie: 连接 Codex 侧边栏（当前远端账户） | 官方配置 RPC + 私有 Unix socket 凭据命令，供新对话使用 |
+| Magpie: 恢复 Codex 原配置（当前远端账户） | 恢复插件管理字段并保留用户后续修改 |
 | Magpie: 选择远端 agent 的模型 | 从本机 Magpie 实时模型目录选择 |
 | Magpie: 检查网关与隧道 | 只读检查本机目录及远端到本机的 HTTP 链路 |
 | Magpie: 复制远端扩展接入信息 | 地址及本次会话临时令牌复制到剪贴板 |

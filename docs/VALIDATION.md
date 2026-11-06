@@ -1,5 +1,23 @@
 # 验证记录
 
+## v0.3.1
+
+- 复现并修复官方 Codex `cliExecutable` 为 `null` 时，本机侧边栏入口调用 `.trim()` 失败的问题。修正测试替身对显式 `null` 的处理，覆盖空值、未设置、空字符串和空白字符串；非空自定义 CLI 路径仍会被拒绝。
+- `npm run check` 与全部 190 项回归测试通过，包含指定官方 bundled binary 的隔离配置 RPC 测试。
+- VSIX 构建及本机安装通过，已安装的全部运行源码与仓库一致。该补丁验证了本机入口修复，远端真实侧边栏 UI 与真实模型响应仍待验收。
+
+## v0.3.0 开发验证：Codex 侧边栏
+
+2026-11-06，本机 macOS、Node.js v26.8.1、Python 3 验证：
+
+- `npm run check` 通过，包含 JavaScript / Python 语法、清单、双语文案与锁文件一致性。
+- 全部 189 项回归测试通过，包含显式指定本机官方 bundled binary 的可选测试；默认不指定时，官方 binary 测试跳过，其他测试照常执行。覆盖私有 socket 权限、无令牌文件、账户租约、并发配置冲突、保留用户修改、恢复缺失字段、严格 auth 兼容检查、取消、重连与进程清理。
+- 跨模块测试执行真实 Python 适配器，经本机 SSH 进程替身、Unix socket 转发和凭据 broker 完成 prepare → apply → rebind → restore，验证实际 JSON 帧格式 与请求字段契约；该测试没有连接远端主机。
+- 本机官方 VS Code 扩展内置 `codex-cli 0.162.0-alpha.17.2` 在隔离 `CODEX_HOME` 完成严格配置检查、带版本的写入、null 删除与恢复。未触碰用户原有 Codex 配置或认证文件。
+- `npm run test:codex-sidebar -- /绝对路径/codex` 实际启动官方 app-server：在已经运行的服务中写入 provider 后，新建线程选用 `magpie_vscode_bridge`；凭据命令从生产 broker 获取令牌，向本机模拟 Responses 服务发送已认证请求并读取固定 SSE 回复 `BRIDGE_PROTOCOL_OK`。只有一次本机模拟响应，未调用任何真实模型。隔离文件未发现临时令牌；测试中的自定义 curlrc 也没有导致凭据落盘。
+- 远端只读检查确认侧边栏内置版本为 `0.164.0-alpha.11.1`。尚未在该版本完成 auth/config 兼容性、服务器 Unix socket 转发、真实 VS Code 侧边栏界面与真实模型响应验收。
+- 本节的本机协议结果不能表述为远端侧边栏已经打通；v0.2.1 的真实 CLI 模型请求也不能替代这项验收。
+
 ## v0.2.1
 
 - 增加远端 CLI 启动前检查和安装指引，覆盖 CLI 存在、缺失、用户 bin、交互式 Bash/nvm、检查失败、取消、超时及过期会话。
@@ -8,7 +26,6 @@
 - 后续在同一 Linux ARM64 服务器安装官方 Codex CLI 0.167.0 原生二进制，按 GitHub 发布摘要校验安装包，采用用户级安装，不使用 sudo 或修改 shell 配置。新版检查成功解析用户 bin 中的绝对路径。
 - 通过插件生产代理、SSH 转发和 Codex 临时 provider 完成一次真实模型请求，CLI 返回预期的 `MAGPIE_BRIDGE_OK`。使用独立验收端口、只读沙箱和临时会话；原工作桥接保持连通，验收转发和临时目录已清理，隔离测试文件未发现会话令牌。
 - 本次已覆盖 Codex 的安装、启动与模型返回。尚未验证 Claude Code 完整会话、agent 修改项目文件及真实断线重连，不将本次最小请求扩大为这些场景的验收。
-
 
 ## v0.2.0
 

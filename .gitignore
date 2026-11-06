@@ -11,3 +11,5 @@ LIVE_TEST_RESULT.json
 *.pem
 *.key
 *.vsix
+__pycache__/
+*.pyc

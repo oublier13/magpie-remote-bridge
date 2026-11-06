@@ -4,7 +4,17 @@ const { randomBytes } = require('node:crypto');
 const { EventEmitter } = require('node:events');
 const { isIP } = require('node:net');
 const { stripVTControlCharacters } = require('node:util');
+const fs = require('node:fs/promises');
+const path = require('node:path');
 const { remoteCliScript } = require('./agents');
+
+let codexHelper;
+function socketPath(value) {
+  if (typeof value !== 'string' || !value.startsWith('/') || value.length > 100 || /[\x00-\x20\x7f:]/.test(value)) {
+    throw new Error('Invalid credential socket path');
+  }
+  return value;
+}
 
 function validateHost(host) {
   const invalid = () => { throw new Error('SSH Host 必须是有效的别名或 user@host，不能包含空白或命令参数'); };
@@ -83,15 +93,55 @@ class Tunnel extends EventEmitter {
         return executable;
       } });
   }
+  async codex(request, { signal } = {}) {
+    if (signal?.aborted) throw abortError();
+    if (!['inspect', 'prepare', 'apply', 'restore', 'cleanup', 'rebind'].includes(request?.operation)) throw new Error('Invalid Codex bridge operation');
+    for (const key of Object.keys(request)) {
+      if (!['operation', 'owner', 'model', 'remotePort', 'socketPath'].includes(key)) throw new Error('Invalid Codex bridge parameter');
+    }
+    const source = await (codexHelper ||= fs.readFile(path.join(__dirname, 'codex-remote.py'), 'utf8'));
+    const data = Buffer.from(JSON.stringify(request)).toString('base64');
+    const args = sshArgs({ ...this.options, interactive: false }, 'unused');
+    args.splice(args.indexOf('-R'));
+    args.push(this.options.host, 'python3 -I -');
+    return this.run(args, { signal, master: this.child, timeoutMs: 60000,
+      timeoutMessage: 'Codex sidebar configuration timed out', maxOutputBytes: 32768, safeErrors: true,
+      input: `${source}\nmain(json.loads(base64.b64decode("${data}")))\n`,
+      parseOutput: body => {
+        const replies = stripVTControlCharacters(body).split('\n').flatMap(line => {
+          try { const value = JSON.parse(line); return value && typeof value.ok === 'boolean' ? [value] : []; }
+          catch { return []; }
+        });
+        if (replies.length !== 1) throw new Error('Invalid Codex bridge response');
+        const result = replies[0];
+        if (result.ok !== true) {
+          const error = new Error('Codex sidebar configuration failed');
+          error.code = typeof result.code === 'string' && /^[A-Z_]{1,64}$/.test(result.code) ? result.code : 'CODEX_CONFIG_FAILED';
+          throw error;
+        }
+        return result;
+      } });
+  }
+  openCredentialForward(localSocket, remoteSocket, { signal } = {}) {
+    socketPath(localSocket); socketPath(remoteSocket);
+    const marker = `MAGPIE_CREDENTIAL_READY_${randomBytes(12).toString('hex')}`;
+    const args = sshArgs({ ...this.options, interactive: false }, marker);
+    args.splice(args.indexOf('-R'));
+    args.push('-R', `${remoteSocket}:${localSocket}`, this.options.host, `printf '%s\\n' '${marker}'; cat`);
+    return this.run(args, { signal, master: this.child, marker, persistent: true,
+      timeoutMs: 20000, timeoutMessage: 'Codex credential forwarding timed out' });
+  }
   stop() {
     // Reject before signalling children; neither a late marker nor HTTP 200 can win.
     for (const operation of [...this.pending]) operation.cancel(abortError());
     this.child = undefined;
     for (const process of this.processes.values()) process.terminate();
   }
-  run(args, { signal, main = false, marker, master, input, timeoutMs, timeoutMessage, maxOutputBytes = 128, parseOutput }) {
+  run(args, { signal, main = false, persistent = false, marker, master, input, timeoutMs, timeoutMessage, maxOutputBytes = 128, parseOutput, safeErrors = false }) {
     return new Promise((resolve, reject) => {
       let child; let record; let timer; let settled = false; let closed = false; let terminating = false; let killTimer;
+      const forward = new EventEmitter();
+      forward.stop = () => record?.terminate();
       let body = ''; let errorText = ''; let outputBytes = 0;
       const operation = { main, cancel: error => finish(error) };
       const onAbort = () => finish(abortError());
@@ -106,17 +156,22 @@ class Tunnel extends EventEmitter {
       };
       const onError = error => {
         if (!settled) finish(error);
-        else if (main) record?.terminate();
+        else if (main || persistent) record?.terminate();
       };
       const onStdout = chunk => {
-        if (main && settled) return;
+        if ((main || persistent) && settled) return;
         const text = chunk.toString(); outputBytes += Buffer.byteLength(text);
-        if (!main && outputBytes > maxOutputBytes) return finish(new Error(parseOutput ? 'Remote CLI check output exceeded limit' : '远端网关检测响应过长'));
-        body = (body + text).slice(main ? -4096 : -maxOutputBytes);
-        if (main && body.includes(marker)) {
+        if (!main && !persistent && outputBytes > maxOutputBytes) return finish(new Error(parseOutput ? 'Remote CLI check output exceeded limit' : '远端网关检测响应过长'));
+        body = (body + text).slice(main || persistent ? -4096 : -maxOutputBytes);
+        if ((main || persistent) && body.includes(marker)) {
           // Also observe a close emitted in the same turn as the readiness marker.
           queueMicrotask(() => {
-            if (!closed && this.child === child && child.exitCode == null && child.signalCode == null) finish();
+            if (closed || child.exitCode != null || child.signalCode != null) return;
+            if (main && this.child === child) finish();
+            else if (persistent) {
+              if (master && (this.child !== master || master.killed || master.exitCode != null || master.signalCode != null)) finish(new Error('SSH connection closed during credential forwarding'));
+              else finish(undefined, forward);
+            }
           });
         }
       };
@@ -137,8 +192,12 @@ class Tunnel extends EventEmitter {
             for (const pending of [...this.pending]) if (!pending.main) pending.cancel(new Error(message));
             this.emit('closed', message);
           }
+        } else if (persistent) {
+          const message = 'Codex credential forwarding closed';
+          if (!settled) finish(new Error(message));
+          forward.emit('closed', message);
         } else if (code !== 0 || (!parseOutput && body.trim() !== '200')) {
-          finish(new Error(parseOutput ? `Remote CLI check failed (SSH/shell=${code}): ${errorText.trim()}` : `远端网关检测失败 (SSH/curl=${code}, HTTP=${body.trim() || '无响应'})；确认远端已安装 curl、SSH Host 与当前工作区一致`));
+          finish(new Error(safeErrors ? `Codex sidebar remote operation failed (SSH/Python=${code})` : parseOutput ? `Remote CLI check failed (SSH/shell=${code}): ${errorText.trim()}` : `远端网关检测失败 (SSH/curl=${code}, HTTP=${body.trim() || '无响应'})；确认远端已安装 curl、SSH Host 与当前工作区一致`));
         } else {
           queueMicrotask(() => {
             if (master && (this.child !== master || master.killed || master.exitCode != null || master.signalCode != null)) {

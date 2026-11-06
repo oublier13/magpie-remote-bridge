@@ -10,6 +10,7 @@ const { createHostPicker } = require('./host-picker');
 const { createLogger } = require('./log');
 const { withCancellation } = require('./ui');
 const { abortable } = require('./cancellation');
+const { CodexSidebarBridge } = require('./codex-sidebar');
 
 const INSTALL_URLS = Object.freeze({
   codex: 'https://github.com/openai/codex',
@@ -119,6 +120,14 @@ function activate(context, dependencies = {}) {
     if (/remote port forwarding failed|cannot listen to port/i.test(error.message)) {
       return t('The remote port is unavailable. Choose another remote port or check SSH forwarding permissions.');
     }
+    if (stage === 'codexSidebar') {
+      if (error.code === 'UNSUPPORTED_CLIENT') return t('Codex sidebar bridging currently requires a macOS or Linux client. The Codex CLI launcher remains available.');
+      if (error.code === 'PROVIDER_EXISTS') return t('The reserved magpie_vscode_bridge provider already exists outside the current bridge. Rename or remove that conflicting provider in your remote Codex config before enabling.');
+      if (/LEASE|ACTIVE|BUSY|RECOVERY/.test(error.code || '')) return t('This remote account already has a Codex sidebar bridge or a recovery record. Restore its configuration before enabling another window.');
+      if (/UNSUPPORTED|COMPAT|AUTH/.test(error.code || '')) return t('The remote Codex extension does not support command-based provider authentication. Update the official Codex extension on the SSH host.');
+      if (error.code === 'CUSTOM_CODEX_CLI') return t('Codex uses a custom CLI executable. Clear that override before enabling sidebar bridging.');
+      return t('Codex sidebar setup failed. Check the remote official Codex extension, Python 3, curl, and configuration permissions. Show Logs for the error code; Restore Codex Configuration can recover an interrupted setup.');
+    }
     if (stage === 'configuration') return t('Bridge settings are invalid. Check the port numbers and local SSH paths.');
     if (error.code === 'INVALID_KEY') return t('The key must not contain control characters.');
     if (stage === 'gateway' || stage === 'proxy') return t('The local Magpie gateway is unavailable. Start Magpie and check its port and gateway key.');
@@ -135,18 +144,21 @@ function activate(context, dependencies = {}) {
     if (shownErrors.has(error)) return;
     shownErrors.add(error);
     log.error(error);
+    if (stage === 'codexSidebar' && error.code) log.warn(`Codex sidebar error: ${error.code}`);
     const retry = t('Retry');
     const settings = t('Open Settings');
     const change = t('Change SSH Host');
     const logs = t('Show Logs');
+    const restore = t('Restore Codex Configuration');
     let selected;
-    try { selected = await vscode.window.showErrorMessage(hint(error, stage), retry, settings, change, logs); }
+    try { selected = await vscode.window.showErrorMessage(hint(error, stage), retry, ...(stage === 'codexSidebar' ? [restore] : [settings, change]), logs); }
     finally { shownErrors.delete(error); }
     if (disposed) return;
     if (selected === retry) await run(retryCommand);
     if (selected === settings) await run('settings');
     if (selected === change) await run('changeHost');
     if (selected === logs) log.show();
+    if (selected === restore && retryCommand !== 'restoreCodex') await run('restoreCodex');
   }
   bridge.on('failure', (error, stage) => { void showFailure(error, stage); });
 
@@ -243,6 +255,85 @@ function activate(context, dependencies = {}) {
     await createTerminal(session, tunnel, agent, executable);
   }
 
+  let sidebarPending;
+  let restorePending;
+  const sidebarUnavailable = () => {
+    if (disposed) return;
+    log.warn('Codex sidebar credentials are unavailable; restore its configuration or reconnect.');
+    void vscode.window.showWarningMessage(t('The Codex sidebar credential channel is unavailable. The terminal bridge remains connected. Restore Codex Configuration before enabling the sidebar again.'));
+  };
+  bridge.on('sidebarFailure', sidebarUnavailable);
+
+  function enableSidebar() {
+    if (sidebarPending) return sidebarPending;
+    sidebarPending = (async () => {
+      hosts.authority();
+      if (restorePending) await restorePending;
+      const cliExecutable = vscode.workspace.getConfiguration('chatgpt').get('cliExecutable');
+      if (typeof cliExecutable === 'string' && cliExecutable.trim()) {
+        const error = new Error('Custom Codex executable is not supported for sidebar bridging');
+        error.code = 'CUSTOM_CODEX_CLI'; throw error;
+      }
+      const session = await connect();
+      if (!session?.ready || bridge.current !== session) return;
+      const tunnel = session.tunnel;
+      if (session.codexIde && !session.codexIde.closed) {
+        await vscode.commands.executeCommand('chatgpt.openSidebar'); return;
+      }
+      if (!cfg().model && !(await chooseModel(true))) return;
+      if (!activeSession(session, tunnel)) return;
+      const sidebar = (dependencies.createCodexSidebar || ((...args) => new CodexSidebarBridge(...args)))(session, {
+        unavailable: sidebarUnavailable, log
+      });
+      session.codexIde = sidebar;
+      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification,
+        title: t('Connecting the remote Codex sidebar'), cancellable: true }, async (_, token) => {
+        const cancellation = token.onCancellationRequested(() => { void sidebar.close().catch(error => log.warn(error.message)); });
+        if (token.isCancellationRequested) await sidebar.close();
+        try { await sidebar.enable(tunnel, cfg().model); }
+        finally { cancellation.dispose(); }
+      });
+      if (!activeSession(session, tunnel) || sidebar.closed) return;
+      log.info(`Codex sidebar provider configured; bundled CLI ${sidebar.version}.`);
+      await vscode.commands.executeCommand('chatgpt.openSidebar');
+      await vscode.window.showInformationMessage(t('Codex sidebar bridging is configured. Start a new Codex chat. The provider applies to new Codex sessions for this remote account; existing chats keep their provider. Keep this Magpie window connected.'));
+    })().catch(error => { error.bridgeStage ||= 'codexSidebar'; throw error; })
+      .finally(() => { sidebarPending = undefined; });
+    return sidebarPending;
+  }
+
+  function restoreCodex() {
+    if (restorePending) return restorePending;
+    // Capture before publishing restorePending, avoiding a wait cycle with enable.
+    const pending = sidebarPending;
+    restorePending = (async () => {
+      hosts.authority();
+      await pending?.catch(() => {});
+      const session = await connect();
+      if (!session?.ready || bridge.current !== session) return;
+      const tunnel = session.tunnel;
+      await session.codexIde?.close();
+      if (!activeSession(session, tunnel)) return;
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      session.controller.signal.addEventListener('abort', abort, { once: true });
+      if (session.controller.signal.aborted) abort();
+      try {
+        const result = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification,
+          title: t('Restoring the remote Codex configuration'), cancellable: true }, async (_, token) => {
+          const cancellation = token.onCancellationRequested(abort);
+          if (token.isCancellationRequested) abort();
+          try { return await tunnel.codex({ operation: 'restore' }, { signal: controller.signal }); }
+          finally { cancellation.dispose(); }
+        });
+        if (!activeSession(session, tunnel)) return;
+        await vscode.window.showInformationMessage(t('Codex configuration restored. Preserved {0} fields changed outside Magpie. Start a new Codex chat to use the restored provider.', result.preserved?.length || 0));
+      } finally { session.controller.signal.removeEventListener('abort', abort); }
+    })().catch(error => { error.bridgeStage ||= 'codexSidebar'; throw error; })
+      .finally(() => { restorePending = undefined; });
+    return restorePending;
+  }
+
   async function diagnose() {
     const config = cfg();
     const gatewayKey = await key();
@@ -286,6 +377,8 @@ function activate(context, dependencies = {}) {
       { label: '$(terminal) ' + t('Open Remote Terminal'), command: 'terminal' },
       { label: '$(terminal) ' + t('Start Claude Code'), command: 'claude' },
       { label: '$(terminal) ' + t('Start Codex CLI'), command: 'codex' },
+      { label: '$(comment-discussion) ' + t('Connect Codex Sidebar'), command: 'codexSidebar' },
+      { label: '$(history) ' + t('Restore Codex Configuration'), command: 'restoreCodex' },
       { label: '$(list-selection) ' + t('Choose Model'), command: 'model' },
       { label: '$(debug-disconnect) ' + t('Disconnect or Cancel'), command: 'disconnect' },
       { label: '$(plug) ' + t('Connect'), command: 'connect' },
@@ -307,6 +400,7 @@ function activate(context, dependencies = {}) {
   const commands = {
     connect, disconnect: () => bridge.disconnect(), menu,
     terminal: () => openTerminal(), claude: () => openTerminal('claude'), codex: () => openTerminal('codex'),
+    codexSidebar: enableSidebar, restoreCodex,
     model: () => chooseModel(), diagnose, key: setKey, logs: () => log.show(),
     settings: () => vscode.commands.executeCommand('workbench.action.openSettings', 'magpieBridge'),
     gettingStarted: () => vscode.commands.executeCommand('workbench.action.openWalkthrough', 'wkoa.magpie-remote-bridge#magpieBridge.setup', false),

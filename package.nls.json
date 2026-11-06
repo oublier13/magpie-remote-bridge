@@ -6,6 +6,8 @@
   "command.terminal": "Magpie: Open Remote Terminal",
   "command.claude": "Magpie: Start Claude Code Remotely",
   "command.codex": "Magpie: Start Codex CLI Remotely",
+  "command.codexSidebar": "Magpie: Connect Codex Sidebar (Remote Account)",
+  "command.restoreCodex": "Magpie: Restore Codex Configuration (Remote Account)",
   "command.model": "Magpie: Choose Agent Model",
   "command.diagnose": "Magpie: Check Gateway and Tunnel",
   "command.copyConnection": "Magpie: Copy Remote Connection Details",

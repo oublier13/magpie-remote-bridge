@@ -6,6 +6,8 @@
   "command.terminal": "Magpie: 打开预配置的远端终端",
   "command.claude": "Magpie: 在远端启动 Claude Code",
   "command.codex": "Magpie: 在远端启动 Codex CLI",
+  "command.codexSidebar": "Magpie: 连接 Codex 侧边栏（当前远端账户）",
+  "command.restoreCodex": "Magpie: 恢复 Codex 原配置（当前远端账户）",
   "command.model": "Magpie: 选择远端 agent 的模型",
   "command.diagnose": "Magpie: 检查网关与隧道",
   "command.copyConnection": "Magpie: 复制远端扩展接入信息",

@@ -127,6 +127,16 @@ class BridgeSession extends EventEmitter {
     await tunnel.probe(session.proxy.token, { signal });
     this._guard(session);
     if (closed) throw new Error('SSH connection closed during verification');
+    if (reconnecting && session.codexIde) {
+      try { await session.codexIde.reconnect(tunnel); }
+      catch (error) {
+        await session.codexIde.close();
+        this.deps.log?.warn('Codex sidebar credential forwarding could not be restored.');
+        this.emit('sidebarFailure', error);
+      }
+      this._guard(session);
+      if (closed) throw new Error('SSH connection closed during sidebar recovery');
+    }
     session.ready = true;
     this._state('connected');
     this.deps.log?.info(reconnecting ? 'SSH reconnected; existing terminals and capability retained.' : 'SSH tunnel and remote HTTP probe succeeded.');
@@ -220,7 +230,7 @@ class BridgeSession extends EventEmitter {
     this._clearStable(session);
     session.controller.abort();
     // Cleanup must continue even when one disposable reports a failure.
-    for (const resource of [session.tunnel, session.proxy, session.auth]) {
+    for (const resource of [session.codexIde, session.tunnel, session.proxy, session.auth]) {
       try {
         const result = resource?.stop ? resource.stop() : resource?.close();
         result?.catch?.(error => this.deps.log?.warn(error.message));
