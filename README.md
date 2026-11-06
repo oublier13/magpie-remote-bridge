@@ -1,10 +1,14 @@
 # Magpie Remote Bridge
 
+Use your local Magpie AI gateway from a VS Code Remote-SSH workspace. Keep provider accounts and upstream keys on your computer while coding agents work with remote files and terminals. Supports authenticated HTTP/SSE forwarding and OpenAI-compatible / Anthropic model APIs.
+
 让 VS Code Remote-SSH 中的编程 agent 直接使用你本机的 Magpie 网关。模型供应商、订阅登录和上游密钥继续由本机 Magpie 管理，远端无需再安装或配置一份 Magpie。
 
 从 [GitHub Releases](https://github.com/wkoa/magpie-remote-bridge/releases/latest) 下载 VSIX 安装包。本项目为独立社区插件，与 Magpie、Microsoft、Anthropic 或 OpenAI 无官方隶属关系。
 
 默认连接本机 `http://127.0.0.1:3425`，在远端提供 `http://127.0.0.1:13425`。
+
+从旧的 `local-tools.magpie-remote-bridge` VSIX 迁移时，请先断开桥接并禁用或卸载旧插件，再安装发布者为 `wkoa` 的版本。新版本的扩展 ID 为 `wkoa.magpie-remote-bridge`，原来的 Host 映射和 SecretStorage 不会跨扩展 ID 自动迁移。
 
 ```text
 远端 agent（CLI / 支持自定义地址的扩展）
@@ -18,7 +22,7 @@
 ## 安装和使用
 
 1. 本机启动 Magpie，确保网关运行在 `127.0.0.1:3425`。
-2. 在本机 VS Code 的扩展面板菜单选择 **Install from VSIX… / 从 VSIX 安装…**，选择 `dist/magpie-remote-bridge-0.1.1.vsix`。扩展应安装在本机；它通过 `extensionKind: ["ui"]` 明确运行在本机。
+2. 在本机 VS Code 的扩展面板菜单选择 **Install from VSIX… / 从 VSIX 安装…**，选择下载的 `magpie-remote-bridge-<版本>.vsix`。扩展应安装在本机；它通过 `extensionKind: ["ui"]` 明确运行在本机。
 3. 使用 VS Code **Remote-SSH** 打开远端项目文件夹。
 4. 命令面板执行 **Magpie: 连接本机网关到远端**。首次选择与当前工作区对应的 SSH Host。每个远端 authority 的选择会在本机记住。
 5. 执行 **Magpie: 在远端启动 Claude Code** 或 **Magpie: 在远端启动 Codex CLI**。终端工作目录就是远端项目，文件操作和命令执行发生在远端。
@@ -111,9 +115,10 @@ SSH 密码通过 OpenSSH ASKPASS 与本机随机令牌保护的回环 IPC 传递
 
 ## 开发、打包和验收
 
-无 npm 运行时依赖，Node.js 20+ 和 Python 3 可运行：
+无 npm 运行时依赖。开发和打包使用 Node.js 22+、npm 与官方 `@vscode/vsce`：
 
 ```bash
+npm ci
 npm run check
 npm test
 npm run package
@@ -124,5 +129,7 @@ F5 使用 `.vscode/launch.json` 启动本机 Extension Development Host，再通
 真实远端验收：安装 VSIX → Remote-SSH 打开项目 → 连接桥接并观察远端 HTTP 200 → 选择模型 → 启动 agent → 要求 agent 读取远端项目内一个已知文件并运行 `pwd` → 断开桥接确认终端关闭、旧令牌失效。需要在你自己的服务器完成此项，自动化模拟测试不能代替真实远端验收。
 
 公开的验证范围见 [验证记录](docs/VALIDATION.md)。原始机器报告、服务器地址和账号信息保留在本地，不随仓库或安装包发布。
+
+数据流与凭据处理见 [隐私说明](PRIVACY.md)。
 
 参考：[VS Code Remote 扩展架构](https://code.visualstudio.com/api/advanced-topics/remote-extensions)、[OpenSSH](https://man.openbsd.org/ssh)、[Magpie 网关](https://usemagpie.ai/docs/start)、[Magpie 参考](https://github.com/yetone/magpie/blob/main/docs/reference.md)、[Codex 配置](https://learn.chatgpt.com/docs/config-file/config-reference)。

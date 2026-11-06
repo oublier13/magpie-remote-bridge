@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- Prepare Marketplace metadata, search keywords, icon and privacy documentation.
+- Package with Microsoft's official vsce tool and exclude local reports and development files.
+
 ## 0.1.1
 
 - macOS/Linux password and key-passphrase authentication through VS Code secure input.
