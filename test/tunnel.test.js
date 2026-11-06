@@ -291,3 +291,84 @@ test('old child closing after a restart does not clear or close the replacement 
   await tunnel.start(); tunnel.stop(); await tunnel.start(); old.emit('close', 0);
   assert.equal(tunnel.child, replacement); assert.equal(closures, 0); tunnel.stop();
 });
+
+test('CLI inspection reuses private authentication with strict host verification and bounded protocol output', async () => {
+  for (const executable of ['/usr/bin/codex', '/home/alice/.local/bin/codex', 'MISSING']) {
+    const p = child(); let checkArgs; let script = '';
+    p.stdin.on('data', chunk => { script += chunk; });
+    const tunnel = new Tunnel({ ...options, auth: { controlPath: '/private/ctl', env: { SSH_ASKPASS_REQUIRE: 'force' } } }, (_, args) => {
+      checkArgs = args;
+      setImmediate(() => {
+        const marker = script.match(/MAGPIE_CLI_[A-F0-9]+/)[0];
+        p.stdout.write(`profile banner\n\x1b[3J${marker}\t${executable}\n`); p.emit('close', 0);
+      });
+      return p;
+    });
+    assert.equal(await tunnel.checkCli('codex'), executable === 'MISSING' ? undefined : executable);
+    for (const option of ['BatchMode=yes', 'ControlPath=/private/ctl', 'StrictHostKeyChecking=yes']) assert.ok(checkArgs.includes(option));
+    assert.ok(!checkArgs.includes('-R'));
+    assert.equal(checkArgs.at(-1), 'sh -s');
+    assert.match(script, /\.local\/bin\/codex/);
+  }
+});
+
+test('CLI inspection rejects SSH, malformed and oversized responses rather than treating them as missing', async () => {
+  for (const mode of ['ssh-error', 'no-marker', 'invalid-path', 'duplicate', 'oversized']) {
+    const p = child(); let script = '';
+    p.stdin.on('data', chunk => { script += chunk; });
+    const tunnel = new Tunnel(options, () => {
+      setImmediate(() => {
+        const marker = script.match(/MAGPIE_CLI_[A-F0-9]+/)[0];
+        const responses = { 'ssh-error': '', 'no-marker': 'banner only', 'invalid-path': `${marker}\tcodex\n`,
+          duplicate: `${marker}\t/usr/bin/codex\n${marker}\tMISSING\n`, oversized: 'x'.repeat(16385) };
+        p.stdout.write(responses[mode]); p.emit('close', mode === 'ssh-error' ? 255 : 0);
+      }); return p;
+    });
+    await assert.rejects(tunnel.checkCli('codex'), /check|path|limit/i);
+    assert.equal(tunnel.pending.size, 0);
+  }
+});
+
+test('CLI inspection cancellation and timeout terminate only the inspection child', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const main = child(), check = child(), timeout = child(); let calls = 0;
+  const tunnel = new Tunnel(options, (_, args) => {
+    const p = [main, check, timeout][calls++];
+    if (p === main) {
+      const marker = args.at(-1).match(/MAGPIE_BRIDGE_READY_[0-9a-f]+/)[0];
+      queueMicrotask(() => p.stdout.write(marker));
+    }
+    return p;
+  });
+  await tunnel.start();
+  const controller = new AbortController();
+  const cancelled = tunnel.checkCli('codex', { signal: controller.signal });
+  const rejected = assert.rejects(cancelled, { name: 'AbortError' });
+  controller.abort(); await rejected;
+  assert.equal(check.killed, true);
+  assert.equal(main.killed, undefined);
+  assert.equal(getEventListeners(controller.signal, 'abort').length, 0);
+  const timed = tunnel.checkCli('claude'); const expired = assert.rejects(timed, /timed out/);
+  t.mock.timers.tick(15000); await expired;
+  assert.equal(timeout.killed, true);
+  assert.equal(main.killed, undefined);
+  assert.equal(tunnel.child, main);
+  tunnel.stop();
+});
+
+test('already cancelled CLI inspection never spawns and a closed master invalidates buffered results', async () => {
+  let calls = 0; const main = child(), check = child(); let script = '';
+  check.stdin.on('data', chunk => { script += chunk; });
+  const tunnel = new Tunnel(options, (_, args) => {
+    if (calls++ > 0) return check;
+    const marker = args.at(-1).match(/MAGPIE_BRIDGE_READY_[0-9a-f]+/)[0];
+    queueMicrotask(() => main.stdout.write(marker)); return main;
+  });
+  await assert.rejects(tunnel.checkCli('codex', { signal: AbortSignal.abort() }), { name: 'AbortError' });
+  assert.equal(calls, 0);
+  await tunnel.start();
+  const pending = tunnel.checkCli('claude'); const rejected = assert.rejects(pending, /SSH/);
+  const marker = script.match(/MAGPIE_CLI_[A-F0-9]+/)[0];
+  check.stdout.write(`${marker}\t/usr/bin/claude\n`); check.emit('close', 0); main.emit('close', 255);
+  await rejected; tunnel.stop();
+});

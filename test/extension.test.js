@@ -16,7 +16,8 @@ test('connects once, probes, launches remotely and revokes resources on disconne
   assert.equal(terminal.options.cwd.path, '/remote/project');
   assert.equal(terminal.options.env.MAGPIE_BRIDGE_TOKEN, 'session-token');
   assert.equal(terminal.options.isTransient, true);
-  assert.ok(terminal.command.startsWith('codex '));
+  assert.ok(terminal.command.startsWith("PATH='/usr/bin':\"$PATH\" '/usr/bin/codex' "));
+  assert.equal(f.tunnels[0].checked, 'codex');
   assert.ok(!terminal.command.includes('session-token'));
   await f.run('disconnect');
   assert.ok(terminal.disposed && f.tunnels[0].stopped && f.proxies[0].closed);
@@ -278,4 +279,123 @@ test('joining a reconnect reports the current attempt in the progress notificati
   assert.equal(f.progressMessages.at(-1), 'Reconnecting 1/3');
   await clock.advance(1000); await pending;
   assert.equal(f.terminals.length, 1);
+});
+
+test('missing CLIs offer remote installation and keep the gateway connected in both languages', async t => {
+  for (const language of ['en', 'zh-cn']) {
+    for (const agent of ['codex', 'claude']) {
+      let actions;
+      const f = fixture({ language, values: { model: '' }, checkCli: async () => undefined,
+        warningAction: items => { actions = items; } }); t.after(f.dispose);
+      await f.run(agent);
+      assert.equal(f.terminals.length, 0);
+      assert.equal(f.proxies[0].closed, undefined);
+      assert.equal(f.tunnels[0].stopped, undefined);
+      assert.equal(f.picks.length, 1); // Host selection only; no model prompt for a missing CLI.
+      assert.match(f.warnings[0], language === 'en' ? /Install it on the remote machine/ : /需要在远端安装/);
+      assert.ok(actions.includes(language === 'en' ? 'Open Remote Terminal' : '打开远端终端'));
+      assert.ok(actions.includes(language === 'en' ? 'Official Installation Guide' : '官方安装说明'));
+      assert.ok(actions.includes(language === 'en' ? 'Retry' : '重试'));
+      assert.equal(f.errors.length, 0);
+    }
+  }
+});
+
+test('missing CLI actions open configured terminals or the matching official guide', async t => {
+  for (const agent of ['codex', 'claude']) {
+    const terminal = fixture({ checkCli: async () => undefined, warningAction: actions => actions[0] }); t.after(terminal.dispose);
+    await terminal.run(agent);
+    assert.equal(terminal.terminals.length, 1);
+    assert.equal(terminal.terminals[0].command, undefined);
+    assert.ok(terminal.terminals[0].options.env.MAGPIE_BRIDGE_TOKEN);
+    const docs = fixture({ checkCli: async () => undefined, warningAction: actions => actions[1] }); t.after(docs.dispose);
+    await docs.run(agent);
+    assert.deepEqual(docs.external, [agent === 'codex' ? 'https://github.com/openai/codex' : 'https://code.claude.com/docs/en/setup']);
+    assert.equal(docs.terminals.length, 0);
+  }
+});
+
+test('retry checks installation again and launches a CLI in a user bin directory', async t => {
+  let checks = 0;
+  const f = fixture({ checkCli: async () => ++checks === 1 ? undefined : '/home/alice/.local/bin/codex',
+    warningAction: actions => actions.find(action => action === 'Retry') }); t.after(f.dispose);
+  await f.run('codex');
+  assert.equal(checks, 2);
+  assert.equal(f.tunnels.length, 1);
+  assert.equal(f.terminals.length, 1);
+  assert.match(f.terminals[0].command, /'\/home\/alice\/\.local\/bin\/codex' -c /);
+});
+
+test('CLI check failures remain actionable without closing an existing terminal or gateway', async t => {
+  for (const language of ['en', 'zh-cn']) {
+    let actions;
+    const f = fixture({ language, checkCli: async () => { throw new Error('SSH/shell failure'); },
+      warningAction: items => { actions = items; } }); t.after(f.dispose);
+    await f.run('terminal'); await f.run('claude');
+    assert.match(f.warnings[0], language === 'en' ? /Could not check claude/ : /无法检查远端 claude/);
+    assert.ok(actions.includes(language === 'en' ? 'Show Logs' : '显示日志'));
+    assert.equal(f.terminals.length, 1);
+    assert.equal(f.terminals[0].disposed, undefined);
+    assert.equal(f.proxies[0].closed, undefined);
+    assert.equal(f.errors.length, 0);
+    assert.ok(f.logs.some(message => message.includes('SSH/shell failure')));
+  }
+});
+
+test('cancelling CLI inspection ends the wait, preserves the gateway, and ignores late success', async t => {
+  let release, signal;
+  const f = fixture({ checkCli: (_, __, opts) => {
+    signal = opts.signal;
+    return new Promise(resolve => { release = resolve; });
+  } }); t.after(f.dispose);
+  await f.run('terminal');
+  let finished = false;
+  const pending = f.run('codex').then(() => { finished = true; }); await flush();
+  f.notifications.at(-1).cancel(); await flush();
+  assert.equal(signal.aborted, true);
+  assert.equal(finished, true);
+  release('/usr/bin/codex'); await pending;
+  assert.equal(f.terminals.length, 1);
+  assert.equal(f.terminals[0].disposed, undefined);
+  assert.equal(f.proxies[0].closed, undefined);
+  assert.deepEqual(f.warnings, []);
+  assert.deepEqual(f.errors, []);
+});
+
+test('a CLI check from a replaced session cannot launch or show a missing notice', async t => {
+  for (const result of ['/usr/bin/claude', undefined]) {
+    let release;
+    const f = fixture({ checkCli: async () => new Promise(resolve => { release = resolve; }) }); t.after(f.dispose);
+    const pending = f.run('claude'); await flush();
+    await f.run('disconnect'); await f.run('terminal');
+    release(result); await pending;
+    assert.equal(f.tunnels.length, 2);
+    assert.equal(f.terminals.length, 1);
+    assert.equal(f.terminals[0].command, undefined);
+    assert.deepEqual(f.warnings, []);
+  }
+});
+
+test('a CLI result from before reconnect cannot start a terminal on the replacement tunnel', async t => {
+  const { Clock } = require('./helpers/clock');
+  const clock = new Clock(); let release;
+  const f = fixture({ values: { autoReconnect: true }, clock,
+    checkCli: async () => new Promise(resolve => { release = resolve; }) }); t.after(f.dispose);
+  const pending = f.run('claude'); await flush();
+  f.tunnels[0].emit('closed', 'offline'); await flush();
+  await clock.advance(1000);
+  release('/usr/bin/claude'); await pending;
+  assert.equal(f.tunnels.length, 2);
+  assert.equal(f.terminals.length, 0);
+  assert.deepEqual(f.warnings, []);
+});
+
+test('an installation notice from an old session cannot open a terminal in a new session', async t => {
+  let release;
+  const f = fixture({ checkCli: async () => undefined,
+    warningAction: () => new Promise(resolve => { release = resolve; }) }); t.after(f.dispose);
+  const pending = f.run('codex'); await flush();
+  await f.run('disconnect'); await f.run('connect');
+  release('Open Remote Terminal'); await pending;
+  assert.equal(f.terminals.length, 0);
 });

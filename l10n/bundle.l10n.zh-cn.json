@@ -66,5 +66,9 @@
   "Used only for this SSH authentication; never saved": "仅用于本次 SSH 认证，不保存密码",
   "Verifying remote access": "验证远端访问",
   "Bridge settings are invalid. Check the port numbers and local SSH paths.": "桥接设置无效，请检查端口范围和本机 SSH 路径。",
-  "Set Gateway Key": "设置网关密钥"
+  "Set Gateway Key": "设置网关密钥",
+  "Checking remote {0} installation": "检查远端 {0} 安装",
+  "Official Installation Guide": "官方安装说明",
+  "Could not check {0} on the remote machine. Check the SSH connection and shell startup, then retry. The gateway remains connected.": "无法检查远端 {0}，请检查 SSH 连接与 shell 初始化后重试。网关保持连接。",
+  "{0} is not installed or could not be found on the remote machine. Install it on the remote machine, then retry. The gateway remains connected.": "远端未安装或未找到 {0}，需要在远端安装后重试。网关保持连接。"
 }

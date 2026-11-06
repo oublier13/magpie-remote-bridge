@@ -4,11 +4,17 @@ const { BridgeSession, isCancelled } = require('./session');
 const { startProxy, getModels } = require('./proxy');
 const { Tunnel } = require('./tunnel');
 const { startAuth } = require('./auth');
-const { localClaudeModels, terminalEnv, codexCommand } = require('./agents');
+const { localClaudeModels, terminalEnv, codexCommand, cliCommand } = require('./agents');
 const { readConfig, getGatewayKey, CONNECTION_KEYS } = require('./config');
 const { createHostPicker } = require('./host-picker');
 const { createLogger } = require('./log');
 const { withCancellation } = require('./ui');
+const { abortable } = require('./cancellation');
+
+const INSTALL_URLS = Object.freeze({
+  codex: 'https://github.com/openai/codex',
+  claude: 'https://code.claude.com/docs/en/setup'
+});
 
 /** Wires the VS Code UI to the independently testable bridge lifecycle. */
 function activate(context, dependencies = {}) {
@@ -162,14 +168,48 @@ function activate(context, dependencies = {}) {
     return true;
   }
 
-  async function openTerminal(agent) {
-    hosts.authority();
-    const session = await connect();
-    if (!session?.ready || bridge.current !== session) return;
-    if (agent === 'codex' && !cfg().model && !(await chooseModel(true))) return;
+  async function checkCli(session, tunnel, agent) {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    session.controller.signal.addEventListener('abort', abort, { once: true });
+    if (session.controller.signal.aborted) abort();
+    try {
+      return await vscode.window.withProgress({
+        location: vscode.ProgressLocation.Notification,
+        title: t('Checking remote {0} installation', agent), cancellable: true
+      }, async (_, token) => {
+        const cancellation = token.onCancellationRequested(abort);
+        if (token.isCancellationRequested) abort();
+        try { return await abortable(tunnel.checkCli(agent, { signal: controller.signal }), controller.signal); }
+        finally { cancellation.dispose(); }
+      });
+    } finally { session.controller.signal.removeEventListener('abort', abort); }
+  }
+
+  async function cliNotice(session, tunnel, agent, failed) {
+    const terminal = t('Open Remote Terminal');
+    const docs = t('Official Installation Guide');
+    const retry = t('Retry');
+    const logs = t('Show Logs');
+    const message = failed
+      ? t('Could not check {0} on the remote machine. Check the SSH connection and shell startup, then retry. The gateway remains connected.', agent)
+      : t('{0} is not installed or could not be found on the remote machine. Install it on the remote machine, then retry. The gateway remains connected.', agent);
+    const selected = await vscode.window.showWarningMessage(message, terminal, docs, retry, ...(failed ? [logs] : []));
+    if (!activeSession(session, tunnel)) return;
+    if (selected === terminal) await createTerminal(session, tunnel);
+    if (selected === docs) await vscode.env.openExternal(vscode.Uri.parse(INSTALL_URLS[agent]));
+    if (selected === retry) await openTerminal(agent);
+    if (selected === logs) log.show();
+  }
+
+  function activeSession(session, tunnel) {
+    return !disposed && bridge.current === session && session.ready && session.tunnel === tunnel;
+  }
+
+  async function createTerminal(session, tunnel, agent, executable) {
     const config = { ...session.config, model: cfg().model, token: session.proxy.token };
     const models = await (dependencies.localClaudeModels || localClaudeModels)(config.gatewayPort);
-    if (bridge.current !== session || !session.ready) return;
+    if (!activeSession(session, tunnel)) return;
     const terminal = vscode.window.createTerminal({
       name: agent ? `Magpie · ${agent === 'claude' ? 'Claude Code' : 'Codex CLI'}` : t('Magpie · Remote Terminal'),
       env: terminalEnv(config, models), cwd: vscode.workspace.workspaceFolders[0].uri,
@@ -177,8 +217,30 @@ function activate(context, dependencies = {}) {
     });
     terminals.add(terminal);
     terminal.show();
-    if (agent === 'claude') terminal.sendText('claude', true);
-    if (agent === 'codex') terminal.sendText(codexCommand(config), true);
+    if (agent === 'claude') terminal.sendText(cliCommand(executable), true);
+    if (agent === 'codex') terminal.sendText(codexCommand(config, executable), true);
+  }
+
+  async function openTerminal(agent) {
+    hosts.authority();
+    const session = await connect();
+    if (!session?.ready || bridge.current !== session) return;
+    const tunnel = session.tunnel;
+    let executable;
+    if (agent) {
+      try { executable = await checkCli(session, tunnel, agent); }
+      catch (error) {
+        if (isCancelled(error) || !activeSession(session, tunnel)) return;
+        log.error(error);
+        await cliNotice(session, tunnel, agent, true);
+        return;
+      }
+      if (!activeSession(session, tunnel)) return;
+      if (!executable) { await cliNotice(session, tunnel, agent, false); return; }
+    }
+    if (agent === 'codex' && !cfg().model && !(await chooseModel(true))) return;
+    if (!activeSession(session, tunnel)) return;
+    await createTerminal(session, tunnel, agent, executable);
   }
 
   async function diagnose() {

@@ -27,7 +27,7 @@ npm run package
 | `src/cancellation.js` | 可及时结束的取消等待，保留迟到资源的清理路径 |
 | `src/ui.js` | AbortSignal 与 VS Code 取消令牌互通 |
 | `src/proxy.js` | 固定路由白名单、认证替换、HTTP/SSE 代理和模型目录查询 |
-| `src/tunnel.js` | OpenSSH 参数、子进程、远端检测和取消清理 |
+| `src/tunnel.js` | OpenSSH 参数、子进程、远端 HTTP/CLI 检查和取消清理 |
 | `src/auth.js` / `src/askpass-client.js` | 本机安全输入框与 SSH ASKPASS 认证通道 |
 | `src/agents.js` | 白名单模型导入与临时终端启动配置 |
 

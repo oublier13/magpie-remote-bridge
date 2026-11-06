@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+- Check the remote Claude Code or Codex CLI before launch, including interactive shell initialization and user bin directories.
+- Launch the resolved executable by absolute path and add only its directory to that process PATH, supporting native binaries and nvm installations.
+- Offer a configured remote terminal, official installation instructions and retry when a CLI is missing; preserve the working gateway and distinguish check failures from missing programs.
+- Cancel stale checks and reject results from replaced sessions or tunnels.
+
 ## 0.2.0
 
 - Extract a cancellable session state machine. Commands join an in-progress reconnect instead of revoking the running agents' token and terminals.
