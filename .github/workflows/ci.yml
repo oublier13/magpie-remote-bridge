@@ -63,3 +63,30 @@ jobs:
           retention-days: 14
       - name: Publish the new version with GitHub OIDC
         run: npx --no-install vsce publish --oidc --packagePath dist/*.vsix --skip-duplicate
+
+  github-release:
+    name: Publish GitHub Release
+    needs: publish
+    if: >-
+      github.repository == 'wkoa/magpie-remote-bridge' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      vars.MARKETPLACE_PUBLISH_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: github-release-publish
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Publish the identical Marketplace package and checksum
+        run: node scripts/github-release.js
+        env:
+          GH_TOKEN: ${{ github.token }}
