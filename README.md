@@ -1,5 +1,7 @@
 # Magpie Remote Bridge
 
+维护者自动发布配置见 [发布说明](docs/PUBLISHING.md)：主分支六组 CI 全部通过后，可通过 GitHub OIDC 将新版本发布到 VS Code Marketplace。
+
 Use your local Magpie AI gateway from a VS Code Remote-SSH workspace. Keep provider accounts and upstream keys on your computer while coding agents work with remote files and terminals. Supports authenticated HTTP/SSE forwarding and OpenAI-compatible / Anthropic model APIs.
 
 让 VS Code Remote-SSH 中的编程 agent 直接使用你本机的 Magpie 网关。模型供应商、订阅登录和上游密钥继续由本机 Magpie 管理，远端无需再安装或配置一份 Magpie。

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.2
+
+- Defer buffered-pipe cleanup until RPC unwinding when SIGTERM, SIGHUP or SIGINT interrupts a write, while still terminating and reaping the child immediately.
+- Add deterministic regressions for signals during buffered writes to prevent the intermittent Linux CI failure.
+- Add opt-in Marketplace OIDC publishing after all six CI matrix jobs succeed on main, with duplicate-version handling and retained VSIX artifacts.
+
 ## 0.3.1
 
 - Accept the official Codex extension's null CLI executable default when connecting the sidebar, while continuing to reject nonempty custom executable overrides.

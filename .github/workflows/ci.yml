@@ -3,6 +3,7 @@ name: Validate
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -25,3 +26,40 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm run package
+
+  publish:
+    name: Publish to VS Code Marketplace
+    needs: test
+    if: >-
+      github.repository == 'wkoa/magpie-remote-bridge' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      vars.MARKETPLACE_PUBLISH_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: vscode-marketplace
+    concurrency:
+      group: vscode-marketplace-publish
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run package
+      - name: Retain the tested release package
+        uses: actions/upload-artifact@v4
+        with:
+          name: marketplace-vsix
+          path: dist/*.vsix
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish the new version with GitHub OIDC
+        run: npx --no-install vsce publish --oidc --packagePath dist/*.vsix --skip-duplicate

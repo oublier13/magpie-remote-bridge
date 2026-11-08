@@ -324,6 +324,36 @@ finally:
     if process.poll() is None:process.kill();process.wait()
 `);
 
+for (const termination of ['SIGTERM', 'SIGHUP', 'SIGINT']) check(`Codex ${termination} during a buffered write defers pipe cleanup until unwinding`, `
+os.mkdir(codex_home,0o700)
+os.environ['MAGPIE_CODEX_FIXTURE_MODE']='ignore-term'
+rpc=Rpc(fixture,codex_home)
+original=None
+class InterruptedWriter(io.RawIOBase):
+    fired=False
+    def writable(self):return True
+    def write(self,data):
+        if not self.fired:
+            self.fired=True
+            signal.raise_signal(getattr(signal,${JSON.stringify(termination)}))
+        return len(data)
+try:
+    try:
+        with rpc:
+            rpc.child.line(time.monotonic()+5)
+            original=rpc.child.process.stdin
+            rpc.child.process.stdin=io.BufferedWriter(InterruptedWriter())
+            rpc.initialize()
+    except SystemExit as error:
+        assert error.code==128+getattr(signal,${JSON.stringify(termination)})
+    else:raise AssertionError('Signal did not stop the RPC')
+    assert rpc.child.process.returncode==-9,rpc.child.process.returncode
+    for pipe in (rpc.child.process.stdin,rpc.child.process.stdout,rpc.child.process.stderr):assert pipe.closed
+    rpc.child.close()
+finally:
+    if original:original.close()
+`);
+
 check('Codex account directory lock rejects concurrent mutations', `
 os.mkdir(codex_home,0o700)
 fd=os.open(codex_home,os.O_RDONLY|os.O_DIRECTORY)

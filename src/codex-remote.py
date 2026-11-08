@@ -66,7 +66,9 @@ class Child:
             signal.signal(signum, self._terminated)
 
     def _terminated(self, signum, frame):
-        self.close()
+        # A signal can interrupt BufferedWriter.flush() while its lock is held.
+        # Reap the child now; Rpc.__exit__ closes pipes after the write unwinds.
+        self.close(close_pipes=False)
         raise SystemExit(128 + signum)
 
     def send(self, message):
@@ -102,8 +104,10 @@ class Child:
                 else:
                     self.stderr = (self.stderr + data)[-32768:]
 
-    def close(self):
+    def close(self, close_pipes=True):
         if self.closed:
+            if close_pipes:
+                self._close_pipes()
             return
         self.closed = True
         for signum, handler in self.previous_handlers.items():
@@ -129,6 +133,10 @@ class Child:
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(self.process.pid, signal.SIGKILL)
         self.selector.close()
+        if close_pipes:
+            self._close_pipes()
+
+    def _close_pipes(self):
         for pipe in (self.process.stdin, self.process.stdout, self.process.stderr):
             pipe.close()
 
