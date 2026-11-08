@@ -1,5 +1,14 @@
 # 验证记录
 
+## v0.3.2
+
+- 修复标签构建中偶发的 Python 管道清理重入：终止信号中先终止并回收配置子进程，缓冲管道在 RPC 栈展开后关闭。
+- 增加三个确定性回归，分别在缓冲写入内部触发 SIGTERM、SIGHUP 和 SIGINT。原实现可稳定复现 `RuntimeError: reentrant call inside BufferedWriter`，修复后子进程被回收、管道关闭、退出码保持正确。
+- 本地语法、翻译和版本检查通过；193 项测试中 192 通过，1 项需要显式指定官方 Codex 二进制的可选测试跳过。
+- 修复提交的 macOS/Linux/Windows × Node.js 22/24 六组 GitHub CI 全部通过。
+- 已完成一次真实 GitHub Actions → Marketplace OIDC 发布：测试矩阵全部成功后，发布任务将 `wkoa.magpie-remote-bridge` 0.3.2 上传到市场。发布环境仅允许 main 分支，不保存 PAT；服务端验证和索引更新属于后续市场处理。
+- 新的侧边栏真实远端 UI 与模型验收范围沿用下方记录，未将 CI 修复或上传成功扩大表述为这些场景已验证。
+
 ## v0.3.1
 
 - 复现并修复官方 Codex `cliExecutable` 为 `null` 时，本机侧边栏入口调用 `.trim()` 失败的问题。修正测试替身对显式 `null` 的处理，覆盖空值、未设置、空字符串和空白字符串；非空自定义 CLI 路径仍会被拒绝。
