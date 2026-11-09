@@ -181,11 +181,12 @@ assert read_config()==original and not os.path.exists(a.state_path)
 `);
 
 check('Codex watchdog survives its setup process exiting without disconnect cleanup', `
+import textwrap
 original={'model':'before','model_provider':'before-provider','model_providers':{}}
 write_config(original)
 settings={'home':home,'binary':fixture,'codex_home':codex_home,'watchdog_policy':{'interval':0.02,'grace':0.4}}
 encoded=module['base64'].b64encode(json.dumps(settings).encode()).decode()
-source='''
+source=textwrap.dedent('''
 import base64,json,os,runpy,socket
 m=runpy.run_path(${JSON.stringify(adapter)})
 a=m['Adapter'](**json.loads(base64.b64decode('''+repr(encoded)+''')))
@@ -194,7 +195,10 @@ p=a.dispatch({'operation':'prepare','owner':owner})
 sock=socket.socket(socket.AF_UNIX);sock.bind(p['socketPath'])
 a.dispatch({'operation':'apply','owner':owner,'model':'vendor/model','remotePort':13425,'socketPath':p['socketPath']})
 os._exit(0)
-'''
+''')
+# Compile explicitly: newer Python -c can dedent implicitly, masking the failure
+# on the older Python versions used by Linux runners.
+compile(source,'<watchdog-setup>','exec')
 parent=subprocess.run([sys.executable,'-I','-c',source],stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=10)
 assert parent.returncode==0,parent.stderr
 deadline=time.monotonic()+5
